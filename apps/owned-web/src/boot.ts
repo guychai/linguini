@@ -1,3 +1,4 @@
+import "./client-header.ts";
 import "./styles.css";
 // Authentication is the only owned screen. Everything after this is upstream T3.
 import { OwnedAdapter } from "./adapter.ts";

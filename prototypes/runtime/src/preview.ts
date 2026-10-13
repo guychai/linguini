@@ -8,8 +8,8 @@
  *   are dropped. Only cookies the preview itself set (stored under an `lpv_` prefix, path-scoped
  *   to the preview) go back to it.
  * - Response hygiene: `Content-Security-Policy: sandbox allow-scripts allow-forms` (opaque
- *   origin, so preview pages cannot use Linguini's origin) unless the latest share explicitly
- *   opted out (re-sharing without cspSandbox: false restores the sandbox);
+ *   origin, so preview pages cannot use Linguini's origin), always: there is no opt-out;
+ *   Service-Worker-Allowed and Clear-Site-Data are dropped;
  *   Set-Cookie is renamed, path-scoped to the preview, and loses Domain.
  * - Linguini's own API refuses requests that come from preview pages (`fromPreview`).
  */
@@ -71,8 +71,8 @@ export class MemoryPreviewPorts implements PreviewPortStore {
     const row: PreviewPort = {
       port,
       label: p.label === undefined ? (prev?.label ?? "") : cleanLabel(p.label),
-      // Opting out is per share: a share without an explicit false resets to the safe default.
-      cspSandbox: p.cspSandbox !== false,
+      // Always sandboxed: the opt-out was removed (kept in the shape for compatibility).
+      cspSandbox: true,
       createdAt: prev?.createdAt ?? new Date().toISOString(),
     };
     this.rows.set(this.k(owner, id, port), row);
@@ -151,7 +151,7 @@ export class PostgresPreviewPorts implements PreviewPortStore {
          label = COALESCE($4, prototype_preview_ports.label),
          csp_sandbox = $5
        RETURNING *`,
-      [owner, id, port, p.label === undefined ? null : cleanLabel(p.label), p.cspSandbox !== false],
+      [owner, id, port, p.label === undefined ? null : cleanLabel(p.label), true],
     );
     if (!r.rows[0]) throw new ApiError(404, "Conversation not found");
     return this.row(r.rows[0]);
@@ -239,6 +239,20 @@ const HOP = new Set([
   "trailer",
   "upgrade",
 ]);
+/** Header the Linguini web client adds to every /api request (see apps/owned-web). */
+export const CLIENT_HEADER = "x-linguini-client";
+/**
+ * Browser requests carrying ambient credentials (session cookie, or tailnet identity) must come
+ * from Linguini's own pages: `Sec-Fetch-Site: same-origin`, plus `X-Linguini-Client` on HTTP
+ * (a cross-origin page cannot add it without a CORS preflight, which is never granted). A
+ * same-origin preview cannot pass either: previews are always CSP-sandboxed (opaque origin, so
+ * the browser reports `cross-site`). Requests without these headers (old browsers, curl) are
+ * refused too; service clients use a bearer token instead (callers skip this check for them).
+ */
+export function browserRequestAllowed(request: IncomingMessage, websocket = false) {
+  if (request.headers["sec-fetch-site"] !== "same-origin") return false;
+  return websocket || request.headers[CLIENT_HEADER] === "1";
+}
 const DROP_REQUEST =
   /^(cookie|authorization|proxy-authorization|forwarded|x-forwarded-.*|x-real-ip|tailscale-.*|x-tailscale-.*)$/i;
 export const COOKIE_PREFIX = "lpv_";
@@ -362,13 +376,16 @@ export const PREVIEW_CSP = "sandbox allow-scripts allow-forms";
 export function previewResponseHeaders(
   headers: IncomingMessage["headers"],
   prefix: string,
-  cspSandbox: boolean,
+  /** False only for a 101 WebSocket upgrade (no document to sandbox). */
+  cspSandbox = true,
 ) {
   const out: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(headers)) {
     if (v === undefined) continue;
     const name = k.toLowerCase();
     if (HOP.has(name) || name === "set-cookie" || name === "referrer-policy") continue;
+    // Origin-wide effects a preview must not have on Linguini's origin.
+    if (name === "service-worker-allowed" || name === "clear-site-data") continue;
     if (
       name === "location" &&
       typeof v === "string" &&
@@ -523,7 +540,7 @@ export class PreviewProxy {
       timeout: this.o.timeoutMs ?? 120_000,
     });
     upstream.on("response", (res) => {
-      const out = previewResponseHeaders(res.headers, r.prefix, r.shared.cspSandbox);
+      const out = previewResponseHeaders(res.headers, r.prefix);
       if (r.grant) out["set-cookie"] = [...((out["set-cookie"] as string[]) ?? []), r.grant];
       response.writeHead(res.statusCode ?? 502, out);
       res.pipe(response);
@@ -578,7 +595,6 @@ export class PreviewProxy {
       for (const one of Array.isArray(v) ? v : [v]) reqLines.push(`${k}: ${one}`);
     const upstream = connect({ host, port: r.port });
     const { owner, conversationId, prefix } = r;
-    const cspSandbox = r.shared.cspSandbox;
     this.o.activity.opened(owner, conversationId);
     let closed = false;
     const done = () => {
@@ -616,7 +632,7 @@ export class PreviewProxy {
         return done();
       }
       const switching = parsed.status === 101;
-      const out = previewResponseHeaders(parsed.headers, prefix, cspSandbox && !switching);
+      const out = previewResponseHeaders(parsed.headers, prefix, !switching);
       if (switching) {
         // The upgrade itself needs these; previewResponseHeaders drops hop-by-hop headers.
         out.connection = "Upgrade";
@@ -707,13 +723,9 @@ export function previewToolHandler(o: {
     const base = o.baseUrl(id);
     let text: string;
     if (call.tool === "share_port") {
-      if (call.args.cspSandbox !== undefined && typeof call.args.cspSandbox !== "boolean")
-        throw new ApiError(400, "cspSandbox must be a boolean");
       const p = await o.ports.share(owner, id, {
         port,
         ...(call.args.label === undefined ? {} : { label: String(call.args.label) }),
-        // Omitted cspSandbox means the safe default (true), even if an earlier share opted out.
-        ...(call.args.cspSandbox === false ? { cspSandbox: false } : {}),
       });
       await o.record(owner, id, "preview.shared", {
         port,
@@ -723,9 +735,7 @@ export function previewToolHandler(o: {
       text = [
         `Shared port ${port}. Preview URL: ${base}/${port}/`,
         `The app must listen on 0.0.0.0:${port} and serve under the base path /preview/${id}/${port}/ (also in $PREVIEW_BASE_URL_${port} and \`preview-url ${port}\`).`,
-        p.cspSandbox
-          ? "Pages are served with CSP sandbox (opaque origin): cookies/localStorage are unavailable to scripts."
-          : "CSP sandbox is OFF for this preview (same origin as Linguini).",
+        "Pages are served with CSP sandbox (opaque origin): cookies/localStorage are unavailable to scripts.",
         "The user sees a Preview chip in the conversation.",
       ].join("\n");
     } else {

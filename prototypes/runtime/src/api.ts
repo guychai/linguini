@@ -12,7 +12,13 @@ import { Engine, type Command } from "./engine.ts";
 import type { TerminalManager } from "./terminal.ts";
 import { attachTerminalStreams, originAllowed, terminalHttp } from "./terminal-api.ts";
 import type { SandboxFiles } from "./files.ts";
-import { fromPreview, PreviewProxy, validPort, type PreviewPortStore } from "./preview.ts";
+import {
+  browserRequestAllowed,
+  fromPreview,
+  PreviewProxy,
+  validPort,
+  type PreviewPortStore,
+} from "./preview.ts";
 import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
 import {
@@ -104,11 +110,11 @@ export function api(
   const authenticate = async (
     request: IncomingMessage,
     wsToken?: string,
-  ): Promise<{ owner: string; user: SessionUser | null } | undefined> => {
+  ): Promise<{ owner: string; user: SessionUser | null; viaToken?: true } | undefined> => {
     const bearer = wsToken ?? request.headers.authorization?.match(/^Bearer (.+)$/)?.[1] ?? "";
     const hash = createHash("sha256").update(bearer).digest();
     const bound = tokens.find((token) => timingSafeEqual(token.hash, hash))?.owner;
-    if (bound) return { owner: bound, user: null };
+    if (bound) return { owner: bound, user: null, viaToken: true };
     if (users) {
       const user = await users.auth.user(request);
       if (!user) return undefined;
@@ -121,6 +127,13 @@ export function api(
   };
   const resolveOwner = async (request: IncomingMessage, wsToken?: string) =>
     (await authenticate(request, wsToken))?.owner;
+  /** Terminal WebSocket: like resolveOwner, but browser credentials need a same-origin upgrade. */
+  const resolveSocketOwner = async (request: IncomingMessage, wsToken?: string) => {
+    const auth = await authenticate(request, wsToken);
+    if (auth && !auth.viaToken && !browserRequestAllowed(request, true))
+      throw new ApiError(403, "Cross-site request refused");
+    return auth?.owner;
+  };
   const conversationExists = async (owner: string, id: string) => {
     await engine.store.snapshot(owner, id, { events: false });
   };
@@ -204,7 +217,10 @@ export function api(
       // Pages served under /preview/ (sandbox apps) must never drive Linguini's API.
       if (fromPreview(request)) throw new ApiError(403, "Requests from preview pages are refused");
       if (users && url.pathname.startsWith("/api/auth/")) {
-        if (request.method !== "GET" && !originAllowed(request, users.auth.trustedOrigins.join(",")))
+        if (
+          request.method !== "GET" &&
+          !originAllowed(request, users.auth.trustedOrigins.join(","))
+        )
           throw new ApiError(403, "Cross-origin request refused");
         // The admin plugin's own routes stay private: /api/admin/* below is the admin API.
         if (url.pathname.startsWith("/api/auth/admin/")) throw new ApiError(404, "Not found");
@@ -223,6 +239,8 @@ export function api(
           users ? "Sign in required" : "Authentication required",
           "unauthenticated",
         );
+      if (!auth.viaToken && !browserRequestAllowed(request))
+        throw new ApiError(403, "Cross-site request refused", "cross_site");
       const owner = auth.owner;
       if (request.method !== "GET" && !originAllowed(request))
         throw new ApiError(403, "Cross-origin request refused");
@@ -304,7 +322,8 @@ export function api(
       }
       if (url.pathname.startsWith("/api/admin/")) {
         // Not an admin (or no admin API): the routes do not exist.
-        if (!users?.accounts || auth.user?.role !== ADMIN_ROLE) throw new ApiError(404, "Not found");
+        if (!users?.accounts || auth.user?.role !== ADMIN_ROLE)
+          throw new ApiError(404, "Not found");
         const accounts = users.accounts;
         if (url.pathname === "/api/admin/users" && request.method === "GET") {
           json(200, { users: await accounts.users(request) });
@@ -610,7 +629,7 @@ export function api(
     else socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
   });
   if (options.terminals)
-    attachTerminalStreams(server, options.terminals, resolveOwner, conversationExists);
+    attachTerminalStreams(server, options.terminals, resolveSocketOwner, conversationExists);
   return {
     server,
     closeStreams: () => {

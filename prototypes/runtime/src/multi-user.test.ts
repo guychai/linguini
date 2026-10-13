@@ -194,6 +194,9 @@ async function rig(
       headers: {
         "content-type": "application/json",
         ...(who ? { cookie: who } : {}),
+        // What Linguini's own web client sends (see browserRequestAllowed).
+        "sec-fetch-site": "same-origin",
+        "x-linguini-client": "1",
         // What a browser on the app sends with Better Auth's POSTs.
         ...(path.startsWith("/api/auth/") && init.method === "POST"
           ? { origin: "http://localhost" }
@@ -356,7 +359,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
       const ws = new WebSocket(
         `ws://127.0.0.1:${r.port}/api/terminal-stream?kind=attach&threadId=${id}&terminalId=default`,
         {
-          headers: { cookie: B },
+          headers: { cookie: B, "sec-fetch-site": "same-origin" },
         },
       );
       const first = await new Promise<string>((res, rej) => {
@@ -366,7 +369,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
       assert.match(first, /"status":"starting"/);
       ws.close();
       const wsMeta = new WebSocket(`ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`, {
-        headers: { cookie: B },
+        headers: { cookie: B, "sec-fetch-site": "same-origin" },
       });
       await once(wsMeta, "open");
       wsMeta.close();
@@ -400,9 +403,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
         assert.equal(anon.status, 401);
         assert.equal(((await anon.json()) as { code: string }).code, "unauthenticated");
       }
-      const anonWs = new WebSocket(
-        `ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`,
-      );
+      const anonWs = new WebSocket(`ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`);
       await new Promise<void>((res) => {
         anonWs.once("unexpected-response", (_q, resp) => {
           assert.equal(resp.statusCode, 401);
@@ -430,7 +431,8 @@ test("settings API: theme prefs per user; model/thinking refused", async (t) => 
   const r = await rig(t, store);
   const a = (await r.signUp("a@x.example")).cookie;
   const b = (await r.signUp("b@x.example")).cookie;
-  const put = (who: string, json: unknown) => r.as(who, "/api/me/settings", { method: "PUT", json });
+  const put = (who: string, json: unknown) =>
+    r.as(who, "/api/me/settings", { method: "PUT", json });
   const theme = { "t3code:theme": "ember" };
   assert.equal((await put(a, { prefs: { theme } })).status, 200);
   assert.equal((await put(a, { model: "m2" })).status, 400);
@@ -498,7 +500,8 @@ test("previews: session cookie never reaches the sandbox app; grant is scoped; s
   const a = await r.signUp("pa@x.example");
   const id = `conv-${randomUUID()}`;
   assert.equal(
-    (await r.as(a.cookie, "/api/conversations", { method: "POST", json: { id, title: "p" } })).status,
+    (await r.as(a.cookie, "/api/conversations", { method: "POST", json: { id, title: "p" } }))
+      .status,
     201,
   );
   await r.ports.share(a.id, id, { port: r.upstreamPort });
@@ -531,13 +534,61 @@ test("previews: session cookie never reaches the sandbox app; grant is scoped; s
   for (const headers of previewish) {
     assert.equal((await r.as(a.cookie, "/api/conversations", { headers })).status, 403);
     assert.equal(
-      (
-        await r.as(a.cookie, "/api/auth/sign-out", { method: "POST", json: {}, headers })
-      ).status,
+      (await r.as(a.cookie, "/api/auth/sign-out", { method: "POST", json: {}, headers })).status,
       403,
     );
     assert.equal((await r.as(a.cookie, "/api/auth/get-session", { headers })).status, 403);
   }
+  // Session-cookie requests must be same-origin and carry X-Linguini-Client (H1).
+  const refused: Record<string, string>[] = [
+    { "sec-fetch-site": "cross-site" },
+    { "sec-fetch-site": "same-site" },
+    { "sec-fetch-site": "none" },
+    { "sec-fetch-site": "" },
+    { "x-linguini-client": "" },
+  ];
+  for (const headers of refused) {
+    const res = await r.as(a.cookie, "/api/conversations", { headers });
+    assert.equal(res.status, 403, JSON.stringify(headers));
+    assert.equal(((await res.json()) as { code: string }).code, "cross_site");
+    assert.equal(
+      (await r.as(a.cookie, `/api/conversations/${id}/previews`, { headers })).status,
+      403,
+    );
+    assert.equal((await r.as(a.cookie, "/api/changes", { headers })).status, 403);
+    assert.equal(
+      (
+        await r.as(a.cookie, "/api/conversations", {
+          method: "POST",
+          json: { title: "x" },
+          headers,
+        })
+      ).status,
+      403,
+    );
+  }
+  // Terminal WebSocket: the session cookie only works on a same-origin upgrade, and a bogus
+  // bearer subprotocol does not exempt it.
+  for (const extra of [{}, { "sec-fetch-site": "cross-site" }]) {
+    for (const protocols of [undefined, ["t3.bearer.bogus"]]) {
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`,
+        protocols,
+        { headers: { cookie: a.cookie, ...extra } },
+      );
+      const status = await new Promise<number>((res) => {
+        ws.once("unexpected-response", (_q, resp) => res(resp.statusCode ?? 0));
+        ws.once("open", () => res(101));
+        ws.once("error", () => {});
+      });
+      assert.equal(status, 403, JSON.stringify({ extra, protocols }));
+    }
+  }
+  const ok = new WebSocket(`ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`, {
+    headers: { cookie: a.cookie, "sec-fetch-site": "same-origin" },
+  });
+  await once(ok, "open");
+  ok.close();
   assert.equal((await r.as(a.cookie, "/api/conversations")).status, 200, "session still valid");
 });
 

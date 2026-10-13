@@ -14,11 +14,7 @@ import { PostgresStore, SqliteStore, type Store } from "./store.ts";
 import { Engine } from "./engine.ts";
 import { api } from "./api.ts";
 import type { Harness, Sink } from "./harness.ts";
-import {
-  MemorySettings,
-  PostgresSettings,
-  settingsPolicyFromEnv,
-} from "./users.ts";
+import { MemorySettings, PostgresSettings, settingsPolicyFromEnv } from "./users.ts";
 import { createAuth, type AdminAuth } from "./auth.ts";
 import { ConversationDeleter } from "./deletion.ts";
 import { FileEgressPolicyWriter, handsKey } from "./hands.ts";
@@ -52,10 +48,7 @@ function fakes() {
   };
 }
 
-async function rig(
-  t: { after: (f: () => unknown) => void },
-  kind: "sqlite" | "postgres",
-) {
+async function rig(t: { after: (f: () => unknown) => void }, kind: "sqlite" | "postgres") {
   const dir = await mkdtemp(join(tmpdir(), "adm-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store: Store =
@@ -77,13 +70,8 @@ async function rig(
     adminEmails: [adminEmail.toUpperCase()],
     ...(pool ? { pool } : {}),
   });
-  const settings = pool
-    ? await PostgresSettings.open(pool)
-    : new MemorySettings();
-  const ports =
-    kind === "postgres"
-      ? await PostgresPreviewPorts.open(database!)
-      : undefined;
+  const settings = pool ? await PostgresSettings.open(pool) : new MemorySettings();
+  const ports = kind === "postgres" ? await PostgresPreviewPorts.open(database!) : undefined;
   const engine = new Engine(
     store,
     async (): Promise<Harness> => ({
@@ -113,20 +101,15 @@ async function rig(
   );
   const accounts = new AccountAdmin(auth.admin, store, deleter, settings);
   const token = "t".repeat(40);
-  const { server, closeStreams } = api(
-    engine,
-    { [token]: "service-owner" },
-    undefined,
-    {
-      auth: {
-        auth,
-        settings,
-        policy: settingsPolicyFromEnv({ PI_MODEL: "m1" }),
-        accounts,
-      },
-      deleter,
+  const { server, closeStreams } = api(engine, { [token]: "service-owner" }, undefined, {
+    auth: {
+      auth,
+      settings,
+      policy: settingsPolicyFromEnv({ PI_MODEL: "m1" }),
+      accounts,
     },
-  );
+    deleter,
+  });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const port = (server.address() as { port: number }).port;
@@ -135,19 +118,22 @@ async function rig(
     server.close();
     await engine.stop();
   });
-  const as = (
-    who: string | null,
-    path: string,
-    init: RequestInit & { json?: unknown } = {},
-  ) =>
+  const as = (who: string | null, path: string, init: RequestInit & { json?: unknown } = {}) =>
     fetch(`http://127.0.0.1:${port}${path}`, {
       ...init,
       ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
       headers: {
         "content-type": "application/json",
         ...(who ? { cookie: who } : {}),
+        // What Linguini's own web client sends (see browserRequestAllowed).
+        "sec-fetch-site": "same-origin",
+        "x-linguini-client": "1",
         ...(init.method && init.method !== "GET"
-          ? { origin: path.startsWith("/api/auth/") ? "http://localhost" : `http://127.0.0.1:${port}` }
+          ? {
+              origin: path.startsWith("/api/auth/")
+                ? "http://localhost"
+                : `http://127.0.0.1:${port}`,
+            }
           : {}),
         ...((init.headers as Record<string, string>) ?? {}),
       },
@@ -206,10 +192,7 @@ async function rig(
     });
     f.jobs.add(`hands-${key}-g1`).add(`hands-${key}-g2`);
     f.nets.add(key);
-    f.objects.set(
-      `sandboxes/ws-${key}/workspace.tar.gz`,
-      new Date().toISOString(),
-    );
+    f.objects.set(`sandboxes/ws-${key}/workspace.tar.gz`, new Date().toISOString());
     f.objects.set(
       `sandboxes/ws-${key}/workspace.after-failed-restore-g2.tar.gz`,
       new Date().toISOString(),
@@ -228,8 +211,8 @@ async function rig(
     jobs: [...f.jobs].filter((j) => j.includes(key)),
     nets: [...f.nets].filter((n) => n === key),
     objects: [...f.objects.keys()].filter((o) => o.includes(key)),
-    policies: (await readdir(policies).catch(() => [] as string[])).filter(
-      (p) => p.startsWith(key),
+    policies: (await readdir(policies).catch(() => [] as string[])).filter((p) =>
+      p.startsWith(key),
     ),
   });
   return {
@@ -258,11 +241,7 @@ for (const kind of ["sqlite", "postgres"] as const)
       const admin = await r.signUp(r.adminEmail);
       const alice = await r.signUp(`alice-${r.sfx}@x.example`);
       const bob = await r.signUp(`bob-${r.sfx}@x.example`);
-      assert.equal(
-        admin.admin,
-        true,
-        "ADMIN_EMAILS (case-insensitive) makes the account an admin",
-      );
+      assert.equal(admin.admin, true, "ADMIN_EMAILS (case-insensitive) makes the account an admin");
       assert.equal(alice.admin, false);
 
       // ---- authz: the admin API does not exist for anyone but admins ----
@@ -282,7 +261,7 @@ for (const kind of ["sqlite", "postgres"] as const)
           assert.equal(
             res.status,
             who ? 404 : 401,
-            `${await res.clone().text()} `+            `${label} ${method} ${path}`,
+            `${await res.clone().text()} ` + `${label} ${method} ${path}`,
           );
         }
       }
@@ -292,10 +271,7 @@ for (const kind of ["sqlite", "postgres"] as const)
       assert.equal(service.status, 404, "service bearer tokens are not admins");
       // The plugin's own routes are not exposed, not even to admins.
       for (const who of [admin.cookie, alice.cookie]) {
-        assert.equal(
-          (await r.as(who, "/api/auth/admin/list-users")).status,
-          404,
-        );
+        assert.equal((await r.as(who, "/api/auth/admin/list-users")).status, 404);
         assert.equal(
           (
             await r.as(who, "/api/auth/admin/set-role", {
@@ -307,8 +283,7 @@ for (const kind of ["sqlite", "postgres"] as const)
         );
       }
       assert.equal(
-        (await r.as(alice.cookie, "/api/session").then((x) => x.json())).user
-          .admin,
+        (await r.as(alice.cookie, "/api/session").then((x) => x.json())).user.admin,
         false,
       );
 
@@ -318,11 +293,7 @@ for (const kind of ["sqlite", "postgres"] as const)
       const b1 = await r.seed(bob.cookie, bob.id, "bob one");
       // A conversation alice deleted whose cleanup never finished (tombstone, artifacts left).
       const a3 = await r.seed(alice.cookie, alice.id, "alice half-deleted");
-      await r.store.mutate(
-        alice.id,
-        a3.id,
-        (c) => void (c.deletedAt = new Date().toISOString()),
-      );
+      await r.store.mutate(alice.id, a3.id, (c) => void (c.deletedAt = new Date().toISOString()));
       assert.equal(
         (
           await r.as(alice.cookie, "/api/me/settings", {
@@ -333,9 +304,7 @@ for (const kind of ["sqlite", "postgres"] as const)
         200,
       );
 
-      const list = (await (
-        await r.as(admin.cookie, "/api/admin/users")
-      ).json()) as {
+      const list = (await (await r.as(admin.cookie, "/api/admin/users")).json()) as {
         users: Array<{
           id: string;
           email: string;
@@ -349,18 +318,11 @@ for (const kind of ["sqlite", "postgres"] as const)
       const row = list.users.find((u) => u.id === alice.id)!;
       assert.equal(row.email, alice.email);
       assert.equal(row.role, "user");
-      assert.equal(
-        row.conversations,
-        2,
-        "tombstoned conversations are not counted",
-      );
+      assert.equal(row.conversations, 2, "tombstoned conversations are not counted");
       assert.equal(row.runningSandboxes, 2);
       assert.ok(row.lastActiveAt && row.createdAt);
       assert.equal(list.users.find((u) => u.id === admin.id)!.role, "admin");
-      assert.ok(
-        !JSON.stringify(list).match(/password|hash|token/i),
-        "no secrets in the list",
-      );
+      assert.ok(!JSON.stringify(list).match(/password|hash|token/i), "no secrets in the list");
 
       // ---- guards ----
       assert.equal(
@@ -421,13 +383,8 @@ for (const kind of ["sqlite", "postgres"] as const)
         401,
         "alice's session is gone",
       );
-      assert.equal(
-        (await r.signIn(alice.email, PW)).status,
-        401,
-        "alice cannot sign in",
-      );
-      if (r.settings instanceof MemorySettings)
-        assert.equal(r.settings.has(alice.id), false);
+      assert.equal((await r.signIn(alice.email, PW)).status, 401, "alice cannot sign in");
+      if (r.settings instanceof MemorySettings) assert.equal(r.settings.has(alice.id), false);
       if (r.pool) {
         for (const [table, col] of [
           ['"user"', "id"],
@@ -437,22 +394,19 @@ for (const kind of ["sqlite", "postgres"] as const)
         ])
           assert.equal(
             (
-              await r.pool.query(
-                `SELECT count(*)::int AS n FROM ${table} WHERE ${col}=$1`,
-                [alice.id],
-              )
+              await r.pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE ${col}=$1`, [
+                alice.id,
+              ])
             ).rows[0].n,
             0,
             table,
           );
         assert.equal(
           (
-            await r.pool
-              .query(
-                "SELECT count(*)::int AS n FROM prototype_events e JOIN (SELECT unnest($1::text[]) id) x ON e.conversation_id = x.id",
-                [[a1.id, a2.id, a3.id]],
-              )
-              
+            await r.pool.query(
+              "SELECT count(*)::int AS n FROM prototype_events e JOIN (SELECT unnest($1::text[]) id) x ON e.conversation_id = x.id",
+              [[a1.id, a2.id, a3.id]],
+            )
           ).rows[0].n,
           0,
           "journal",
@@ -463,13 +417,10 @@ for (const kind of ["sqlite", "postgres"] as const)
       assert.equal(bt.jobs.length, 2);
       assert.equal(bt.objects.length, 2);
       assert.equal(bt.policies.length, 1);
-      assert.equal(
-        (await r.as(bob.cookie, `/api/conversations/${b1.id}`)).status,
-        200,
-      );
-      const after = (await (
-        await r.as(admin.cookie, "/api/admin/users")
-      ).json()) as { users: Array<{ id: string }> };
+      assert.equal((await r.as(bob.cookie, `/api/conversations/${b1.id}`)).status, 200);
+      const after = (await (await r.as(admin.cookie, "/api/admin/users")).json()) as {
+        users: Array<{ id: string }>;
+      };
       assert.ok(!after.users.some((u) => u.id === alice.id));
       assert.equal(
         (
@@ -499,11 +450,10 @@ for (const kind of ["sqlite", "postgres"] as const)
         ).status,
         400,
       );
-      const reset = await r.as(
-        admin.cookie,
-        `/api/admin/users/${bob.id}/password`,
-        { method: "POST", json: {} },
-      );
+      const reset = await r.as(admin.cookie, `/api/admin/users/${bob.id}/password`, {
+        method: "POST",
+        json: {},
+      });
       assert.equal(reset.status, 200);
       const { password: temp } = (await reset.json()) as { password: string };
       assert.ok(temp && temp.length >= 12);
@@ -512,11 +462,7 @@ for (const kind of ["sqlite", "postgres"] as const)
         401,
         "bob's sessions are revoked",
       );
-      assert.equal(
-        (await r.signIn(bob.email, PW)).status,
-        401,
-        "old password refused",
-      );
+      assert.equal((await r.signIn(bob.email, PW)).status, 401, "old password refused");
       const bobNew = await r.signIn(bob.email, temp);
       assert.equal(bobNew.status, 200);
       // Bob changes his own password (Better Auth change-password).
@@ -529,22 +475,15 @@ for (const kind of ["sqlite", "postgres"] as const)
         },
       });
       assert.equal(ch.status, 200, await ch.clone().text());
-      assert.equal(
-        (await r.signIn(bob.email, "bob's own password")).status,
-        200,
-      );
-      const set = await r.as(
-        admin.cookie,
-        `/api/admin/users/${bob.id}/password`,
-        { method: "POST", json: { password: "chosen by admin" } },
-      );
+      assert.equal((await r.signIn(bob.email, "bob's own password")).status, 200);
+      const set = await r.as(admin.cookie, `/api/admin/users/${bob.id}/password`, {
+        method: "POST",
+        json: { password: "chosen by admin" },
+      });
       assert.deepEqual(await set.json(), {}, "a chosen password is not echoed");
       assert.equal((await r.signIn(bob.email, "chosen by admin")).status, 200);
       // Bob's data survived all of it.
-      assert.equal(
-        (await r.store.refs()).filter((x) => x.owner === bob.id).length,
-        1,
-      );
+      assert.equal((await r.store.refs()).filter((x) => x.owner === bob.id).length, 1);
       if (r.pool)
         await r.pool
           .query(`DELETE FROM "user" WHERE id = ANY($1)`, [[admin.id, bob.id]])
