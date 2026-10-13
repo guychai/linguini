@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Root helper: the one privileged step the backend needs to put a sandbox behind the egress
+# boundary. The backend runs it through a single sudoers rule (installed by linux/45-egress.sh)
+# instead of being in the docker group (root-equivalent):
+#   sudo -n /opt/sandbox-egress/node/sandbox-netctl ensure KEY   -> JSON {name, subnet, gateway, ipv4}
+#   sudo -n /opt/sandbox-egress/node/sandbox-netctl release KEY
+#   sudo -n /opt/sandbox-egress/node/sandbox-netctl show KEY
+# ensure (idempotent, serialized by a lock):
+#   - Docker bridge network "sbx<key[0:12]>" (bridge interface of the same name) on a free /29
+#     from POOL, labelled with the full key; masquerade off, inter-container traffic off; the
+#     gateway (.1) is the node side, the sandbox gets .2;
+#   - binds (interface, .2) in the nftables set and maps .2 -> KEY for the proxy
+#     (sandbox-net.sh add), so the sandbox can only reach the proxy, with that identity.
+# A name that exists with another key's label is refused (no silent sharing). Paths are constants,
+# not environment variables: sudo must not let a caller point this at other binaries.
+set -euo pipefail
+DOCKER=/usr/bin/docker
+SANDBOX_NET=/opt/sandbox-egress/node/sandbox-net.sh
+STATE_DIR=/run/sandbox-egress
+POOL=10.90            # 10.90.0.0/16 -> 8192 /29 networks
+LABEL=sandbox.egress.key
+
+die() { echo "sandbox-netctl: $*" >&2; exit 1; }
+[ "${2:-}" ] || die "usage: sandbox-netctl ensure|release|show KEY"
+KEY="$2"
+[[ "$KEY" =~ ^[a-z0-9]{12,40}$ ]] || die "conversation key must match ^[a-z0-9]{12,40}$"
+NAME="sbx${KEY:0:12}"
+
+inspect() { "$DOCKER" network inspect "$NAME" --format "{{index .Labels \"$LABEL\"}} {{range .IPAM.Config}}{{.Subnet}} {{.Gateway}}{{end}}" 2>/dev/null; }
+emit() { printf '{"name":"%s","subnet":"%s","gateway":"%s","ipv4":"%s"}\n' "$NAME" "$SUBNET" "$GW" "$(ipv4_of "$SUBNET")"; }
+# owned: prints "subnet gateway"; returns 1 if the network does not exist, 2 if another key owns it.
+owned() {
+  local info label subnet gw
+  info=$(inspect) || return 1
+  read -r label subnet gw <<< "$info"
+  [ "$label" = "$KEY" ] || { echo "network $NAME exists but belongs to another key (label '${label:-none}')" >&2; return 2; }
+  echo "$subnet $gw"
+}
+lookup() { # -> sets SUBNET GW, or dies / returns 1 when missing
+  local sg rc=0
+  sg=$(owned) || rc=$?
+  [ "$rc" = 2 ] && die "refusing to share $NAME"
+  [ "$rc" = 0 ] || return 1
+  read -r SUBNET GW <<< "$sg"
+}
+ipv4_of() { local base="${1%/*}"; echo "${base%.*}.$(( ${base##*.} + 2 ))"; }
+
+case "$1" in
+  ensure)
+    install -d -m 0755 "$STATE_DIR"
+    exec 9>"$STATE_DIR/netctl.lock"; flock -w 30 9 || die "lock timeout"
+    if ! lookup; then
+      used=" $("$DOCKER" network ls -q --filter "label=$LABEL" | xargs -r "$DOCKER" network inspect --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' | tr '\n' ' ') "
+      subnet=""
+      for i in $(seq 0 8191); do
+        cand="$POOL.$(( i / 32 )).$(( (i % 32) * 8 ))/29"
+        case "$used" in *" $cand "*) continue ;; esac
+        subnet="$cand"; break
+      done
+      [ -n "$subnet" ] || die "address pool $POOL.0.0/16 exhausted"
+      base="${subnet%/*}"
+      "$DOCKER" network create --driver bridge --subnet "$subnet" --gateway "${base%.*}.$(( ${base##*.} + 1 ))" \
+        --label "$LABEL=$KEY" \
+        -o com.docker.network.bridge.name="$NAME" \
+        -o com.docker.network.bridge.enable_ip_masquerade=false \
+        -o com.docker.network.bridge.enable_icc=false "$NAME" >/dev/null
+      lookup || die "network $NAME was not created"
+    fi
+    "$SANDBOX_NET" add "$NAME" "$(ipv4_of "$SUBNET")" "$KEY" >/dev/null
+    emit
+    ;;
+  show)
+    lookup || die "no network for this key"
+    emit
+    ;;
+  release)
+    install -d -m 0755 "$STATE_DIR"
+    exec 9>"$STATE_DIR/netctl.lock"; flock -w 30 9 || die "lock timeout"
+    if lookup; then
+      "$SANDBOX_NET" del "$NAME" "$(ipv4_of "$SUBNET")" >/dev/null
+      "$DOCKER" network rm "$NAME" >/dev/null || die "network $NAME still in use"
+    fi
+    echo "{\"name\":\"$NAME\",\"released\":true}"
+    ;;
+  *) die "usage: sandbox-netctl ensure|release|show KEY" ;;
+esac

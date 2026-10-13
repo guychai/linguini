@@ -1,0 +1,13 @@
+[Unit]
+Description=Linguini S3 (SeaweedFS in Docker) for sandbox snapshots
+Requires=docker.service
+After=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/agent-platform/infra/hosting/seaweedfs
+EnvironmentFile=/etc/agent-platform/seaweedfs.env
+ExecStart=/usr/bin/docker compose -f compose.yml up -d --wait
+ExecStop=/usr/bin/docker compose -f compose.yml stop
+[Install]
+WantedBy=multi-user.target

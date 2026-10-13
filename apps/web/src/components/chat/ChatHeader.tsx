@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { uiFlags } from "../../uiFlags";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
@@ -313,7 +314,7 @@ export const ChatHeader = memo(function ChatHeader({
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone
             doesn't answer it. */}
-        {activeProject ? (
+        {activeProject && !uiFlags.hideProjects ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">
               <Tooltip>

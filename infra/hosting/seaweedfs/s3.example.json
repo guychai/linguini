@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "linguini",
+      "credentials": [{ "accessKey": "local-dev-key", "secretKey": "local-dev-secret-change-me" }],
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
+    }
+  ]
+}

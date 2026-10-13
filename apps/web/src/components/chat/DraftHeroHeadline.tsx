@@ -1,4 +1,5 @@
 import type { DraftId } from "~/composerDraftStore";
+import { uiFlags } from "../../uiFlags";
 import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -367,13 +368,15 @@ export function DraftHeroHeadline({
   // a complete sentence too. The project picker is a control rendered inline
   // in the h1; without an explicit label its widget state bleeds into the
   // announced phrase.
-  const headingLabel = isScratchDraft
-    ? "What should we work on?"
-    : hasResolvedProject
-      ? `What should we build in ${activeProjectDisplayName}?`
-      : canChooseProject
-        ? `${activeProjectDisplayName ?? "Choose a project"} to start`
-        : "Add a project to start";
+  const headingLabel = uiFlags.hideProjects
+    ? "What should we build?"
+    : isScratchDraft
+      ? "What should we work on?"
+      : hasResolvedProject
+        ? `What should we build in ${activeProjectDisplayName}?`
+        : canChooseProject
+          ? `${activeProjectDisplayName ?? "Choose a project"} to start`
+          : "Add a project to start";
 
   // One click out of the project, phrased as the alternative to the question
   // above it. Focus moves to the project picker once this line has gone.
@@ -408,7 +411,9 @@ export function DraftHeroHeadline({
         aria-label={headingLabel}
         className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
       >
-        {isScratchDraft ? (
+        {uiFlags.hideProjects ? (
+          <>What should we build?</>
+        ) : isScratchDraft ? (
           <>What should we work on?</>
         ) : hasResolvedProject ? (
           <>What should we build in {projectSelector}?</>
@@ -420,7 +425,7 @@ export function DraftHeroHeadline({
       </h1>
       {/* Reserved whenever threads can skip a project, so the heading does not
           move. Without a project, the picker moves here to choose one. */}
-      {scratchWorkspaceRoot === null ? null : (
+      {scratchWorkspaceRoot === null || uiFlags.hideProjects ? null : (
         <p className="mt-2 flex h-6 items-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}
         </p>

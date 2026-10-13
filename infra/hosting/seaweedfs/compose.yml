@@ -1,0 +1,27 @@
+# S3-compatible storage for sandbox workspace snapshots (SeaweedFS, single container).
+# Local dev:  cp s3.example.json s3.json && docker compose up -d   (endpoint http://127.0.0.1:8333)
+# dev VM:     linguini-s3.service runs this file with S3_CONFIG=/etc/agent-platform/seaweedfs-s3.json
+# Only the S3 port is published, and only on loopback: sandboxes reach the host solely through
+# the egress proxy, which never allows loopback/private destinations.
+name: linguini-s3
+services:
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:latest}
+    command:
+      [
+        "server",
+        "-dir=/data",
+        "-s3",
+        "-s3.port=8333",
+        "-s3.config=/etc/seaweedfs/s3.json",
+        "-volume.max=0",
+        "-master.volumeSizeLimitMB=1024",
+      ]
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweedfs-data:/data
+      - ${S3_CONFIG:-./s3.json}:/etc/seaweedfs/s3.json:ro
+    restart: unless-stopped
+volumes:
+  seaweedfs-data:

@@ -12,6 +12,8 @@ packages/*/dist
 .env
 .env.local
 build/
+# The sandbox kit's inner-Docker workload (step 40) is source, not build output.
+!infra/sandbox-kit/inner/build/
 .logs/
 release/
 release-mock/
@@ -45,3 +47,4 @@ node_modules/
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+prototypes/*/dist/

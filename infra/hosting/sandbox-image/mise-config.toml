@@ -1,0 +1,13 @@
+# System-wide mise config (/etc/mise/config.toml) for sandboxes.
+[tools]
+node = "lts"
+python = "3.13"
+
+[settings]
+# Alpine is musl: official Node builds are glibc-only, so use the musl unofficial builds.
+node.flavor = "musl"
+node.mirror_url = "https://unofficial-builds.nodejs.org/download/release/"
+python.compile = false
+# Use precompiled musl binaries instead of compiling on Alpine.
+all_compile = false
+experimental = false

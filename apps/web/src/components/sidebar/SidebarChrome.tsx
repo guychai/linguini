@@ -7,6 +7,7 @@ import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
+import { uiFlags } from "../../uiFlags";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -115,7 +116,8 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        uiFlags.appName ? "flex" : "hidden",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -126,6 +128,12 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 }
 
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  if (uiFlags.appName)
+    return (
+      <span className="truncate text-sm font-medium tracking-tight text-foreground">
+        {uiFlags.appName}
+      </span>
+    );
   return (
     // Center the visible capitals, without the font's ascender/descender space.
     // Padding keeps ascenders and round-letter overshoot inside the truncation clip.
@@ -228,11 +236,36 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
+          {uiFlags.hideUsage ? null : (
+            <SidebarUtilityItem
+              icon={<ChartNoAxesColumnIcon />}
+              label="Usage"
+              onClick={handleUsageClick}
+            />
+          )}
+          {uiFlags.signedInUser ? (
+            <SidebarMenuItem className="min-w-0 flex-1 px-1">
+              <span
+                className="block truncate text-xs text-muted-foreground"
+                data-testid="signed-in-user"
+                title={`Signed in as ${uiFlags.signedInUser.login}`}
+              >
+                {uiFlags.signedInUser.name}
+              </span>
+            </SidebarMenuItem>
+          ) : null}
+          {uiFlags.signedInUser && uiFlags.signOut ? (
+            <SidebarMenuItem className="shrink-0">
+              <button
+                type="button"
+                className="rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                data-testid="sign-out"
+                onClick={uiFlags.signOut}
+              >
+                Sign out
+              </button>
+            </SidebarMenuItem>
+          ) : null}
         </>
       )}
       <SidebarUpdatePill />

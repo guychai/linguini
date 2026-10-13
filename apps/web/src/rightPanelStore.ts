@@ -18,6 +18,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
+import { isRightPanelSurfaceHidden } from "./uiFlags";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
 
@@ -303,14 +304,17 @@ const upsertSurface = (
   current: ThreadRightPanelState,
   surface: RightPanelSurface,
   activate = true,
-): ThreadRightPanelState => ({
-  ...current,
-  isOpen: true,
-  surfaces: current.surfaces.some((entry) => entry.id === surface.id)
-    ? current.surfaces
-    : [...current.surfaces, surface],
-  activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
-});
+): ThreadRightPanelState =>
+  isRightPanelSurfaceHidden(surface.kind)
+    ? current
+    : {
+        ...current,
+        isOpen: true,
+        surfaces: current.surfaces.some((entry) => entry.id === surface.id)
+          ? current.surfaces
+          : [...current.surfaces, surface],
+        activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
+      };
 
 const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,

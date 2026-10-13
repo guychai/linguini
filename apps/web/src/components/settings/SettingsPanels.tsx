@@ -1,3 +1,4 @@
+import { uiFlags } from "../../uiFlags";
 import { SettingsGroup } from "./SettingsGroup";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
@@ -1150,6 +1151,13 @@ function BackgroundActivityAdvancedDialog({
   );
 }
 
+/** A settings block rendered by the embedding shell (uiFlags.settingsExtensions). */
+function ShellMountedSection({ mount }: { mount: (element: HTMLElement) => () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => (ref.current ? mount(ref.current) : undefined), [mount]);
+  return <div ref={ref} />;
+}
+
 export function AppearanceSettingsPanel() {
   const {
     appearanceMode,
@@ -1191,6 +1199,26 @@ export function AppearanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {uiFlags.signedInUser ? (
+        <SettingsSection id="account" title="Account">
+          <SettingsRow
+            title={uiFlags.signedInUser.name}
+            description={uiFlags.signedInUser.login}
+            control={
+              uiFlags.signOut ? (
+                <Button size="xs" variant="outline" onClick={uiFlags.signOut}>
+                  Sign out
+                </Button>
+              ) : null
+            }
+          />
+        </SettingsSection>
+      ) : null}
+      {uiFlags.settingsExtensions?.map((extension) => (
+        <SettingsSection key={extension.id} id={extension.id} title={extension.title}>
+          <ShellMountedSection mount={extension.mount} />
+        </SettingsSection>
+      ))}
       <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
         <div id={searchableSetting("theme").id}>
           <ThemeLibrary

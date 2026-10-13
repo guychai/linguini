@@ -1,3 +1,22 @@
+# Linguini
+
+> **Unofficial fork.** Linguini is built on [T3 Code](https://github.com/pingdotgg/t3code) by T3 Tools Inc., used under the MIT License (see [LICENSE](LICENSE)). It is not affiliated with, endorsed by, or supported by T3 Tools. The T3 Code name, apps and download links below belong to upstream.
+
+Linguini turns T3 Code into a multi-user agent platform:
+
+- **Sandboxes:** each conversation gets its own Kata Containers micro-VM scheduled by Nomad, with Docker inside.
+- **Egress:** all sandbox traffic goes through a transparent mitmproxy egress proxy with a per-conversation allowlist (hosts, methods, paths) and DNS control; credentials are injected by the proxy, never placed in the sandbox.
+- **Persistence:** idle sandboxes are stopped and their workspace is snapshotted to S3-compatible storage (SeaweedFS), then restored on the next start.
+- **Preview ports:** apps running in a sandbox can be shared at `/preview/<conversation>/<port>/` with sandboxing headers.
+- **Accounts:** Better Auth email/password sign-in, per-user conversations, Postgres storage.
+
+Docs: [PROTOTYPES.md](PROTOTYPES.md) (runtime, startup, validation, limitations), [infra/hosting/README.md](infra/hosting/README.md) (single-node hosting), [infra/sandbox-kit/](infra/sandbox-kit/) (sandbox node installer, egress design and runbook). Upstream base: [UPSTREAM](UPSTREAM).
+
+The upstream T3 Code README follows.
+
+---
+
+
 # T3 Code
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).

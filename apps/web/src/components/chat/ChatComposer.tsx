@@ -1,3 +1,4 @@
+import { uiFlags } from "../../uiFlags";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -1263,9 +1264,11 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
       ? "Plan mode — click to return to normal build mode"
       : "Default mode — click to enter plan mode";
 
+  // Owned flags: with the model picker hidden nothing precedes this block, so drop leading separators.
+  const showRuntimeModePicker = !uiFlags.hideRuntimeModePicker;
   const interactionModeToggle = props.showInteractionModeToggle ? (
     <>
-      <ComposerControlSeparator size={size} />
+      {showRuntimeModePicker || !uiFlags.hideModelPicker ? <ComposerControlSeparator size={size} /> : null}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -1303,7 +1306,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
   return (
     <>
-      <ComposerControlSeparator size={size} />
+      {showRuntimeModePicker ? (<>
+      {uiFlags.hideModelPicker ? null : <ComposerControlSeparator size={size} />}
 
       <Tooltip>
         <Select
@@ -1352,6 +1356,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </Select>
         <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
       </Tooltip>
+      </>) : null}
 
       {interactionModeToggle}
     </>
@@ -3019,7 +3024,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planModeEnabled: settings.planModeEnabled,
     isComposerOwned: true,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
-  const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
+  const providerTraitsPicker = uiFlags.hideModelPicker
+    ? null
+    : renderProviderTraitsPicker(providerTraitsPickerInput);
   const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
     null,
   );
@@ -5475,7 +5482,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const iconOnlyBlockCount = composerControlsCollapsed
     ? restingControlsIconOnlyBlockCount
     : expandedControlsLayout.iconOnlyBlockCount;
-  const restingProviderTraitsPicker = renderProviderTraitsPicker({
+  const restingProviderTraitsPicker = uiFlags.hideModelPicker ? null : renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
@@ -5494,7 +5501,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           },
         ]
       : []),
-    {
+    ...(uiFlags.hideRuntimeModePicker && !planModeUiEnabled ? [] : [{
       id: "mode",
       content: (
         <ComposerFooterModeControls
@@ -5508,7 +5515,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       ),
-    },
+    }]),
   ];
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
@@ -5530,7 +5537,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     </ComposerControl>
   ) : (
     <>
-      {composerControlsCollapsed &&
+      {!uiFlags.hideModelPicker &&
+      composerControlsCollapsed &&
       restingControlsHost !== null &&
       restingControlsHaveLeadingContext ? (
         <ComposerControlSeparator
@@ -5539,7 +5547,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           data-resting-controls-separator="true"
         />
       ) : null}
-      <ProviderModelPicker
+      {uiFlags.hideModelPicker ? null : <ProviderModelPicker
         environmentId={environmentId}
         compact={false}
         isComposerOwned
@@ -5627,7 +5635,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           onProviderModelSelect(instanceId, model);
         }}
         onOpenProviderSetup={onOpenProviderSetup}
-      />
+      />}
 
       <>
         {restingBlockDefs.map((def, index) => {

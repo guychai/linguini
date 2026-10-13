@@ -1,0 +1,199 @@
+{
+  "Job": {
+    "Region": null,
+    "Namespace": null,
+    "ID": "hands",
+    "Name": "hands",
+    "Type": "service",
+    "Priority": null,
+    "AllAtOnce": null,
+    "Datacenters": ["*"],
+    "NodePool": null,
+    "Constraints": null,
+    "Affinities": null,
+    "TaskGroups": [
+      {
+        "Name": "hands",
+        "Count": 1,
+        "Constraints": null,
+        "Affinities": null,
+        "Tasks": [
+          {
+            "Name": "hands",
+            "Driver": "docker",
+            "User": "",
+            "Lifecycle": null,
+            "Config": {
+              "args": [
+                "-c",
+                "# Entrypoint for the inner Docker daemon inside a Kata guest. Passed as `sh -c` to the pinned\n# docker:dind image by 40-inner-docker.sh and by the Nomad job template; the owned runtime's\n# NomadKataHands embeds the same text (a unit test keeps them identical).\n#\n# Why not --privileged: with Docker as the outer engine there is no\n# privileged_without_host_devices switch (that is containerd-CRI / CRI-O only, per Kata's\n# privileged.md), so a privileged Kata container asks the runtime to pass the Lima VM's host\n# devices into the guest. The container instead gets a few capabilities; they act on the Kata\n# guest kernel, whose boundary is the VM, not on the Lima kernel.\n#\n# Kata mounts cgroup2 read-only for a non-privileged container (as runc does). The dind script\n# must create /sys/fs/cgroup/init and enable controllers, so remount it read-write\n# (CAP_SYS_ADMIN, guest kernel only). Fail fast instead of letting dind's loop spin forever.\nset -eu\nmount -o remount,rw /sys/fs/cgroup 2>/dev/null || true\n# /proc/sys is read-only too; dockerd writes per-interface sysctls (IPv6 on each container veth,\n# IPv4 forwarding) and fails \"docker run\" without them. Guest kernel only, like the cgroup remount.\nmount -o remount,rw /proc/sys 2>/dev/null || true\nif ! mkdir -p /sys/fs/cgroup/init 2>/dev/null; then\n  echo \"kit: /sys/fs/cgroup is not writable; inner dockerd cannot manage cgroups\" >&2\n  exit 70\nfi\n# Docker gives containers on a user-defined network its embedded resolver (127.0.0.11), which\n# lives in the host's network namespace and is unreachable from inside a Kata guest, so every\n# plain lookup failed. Point the guest at the gateway instead; nftables sends any DNS there to the\n# egress proxy, which answers only allowlisted names. Inner containers inherit this file.\n# (No brace expansions here: Nomad interpolates them in task config.)\ndns=$(printenv SANDBOX_DNS || true)\nif [ -n \"$dns\" ] && grep -q '^nameserver 127\\.0\\.0\\.11' /etc/resolv.conf 2>/dev/null; then\n  printf 'nameserver %s\\noptions ndots:0\\n' \"$dns\" > /etc/resolv.conf ||\n    echo \"kit: could not rewrite /etc/resolv.conf\" >&2\nfi\n# Trust the node's egress CA system-wide. The egress proxy is transparent (nftables redirects\n# TCP 80/443 to it), so the guest has no proxy settings, only this trust. The job's CA env vars\n# point at the system bundle; dockerd (Go) reads it at start, so install before exec.\nif [ -s /local/egress-ca.pem ]; then\n  mkdir -p /usr/local/share/ca-certificates\n  cp /local/egress-ca.pem /usr/local/share/ca-certificates/linguini-egress-ca.crt\n  update-ca-certificates >/dev/null 2>&1 || cat /local/egress-ca.pem >> /etc/ssl/certs/ca-certificates.crt\nfi\n# The workspace is the only persistent path. /var/lib/docker is whatever the caller mounted.\nmkdir -p /workspace\nexec dockerd-entrypoint.sh dockerd --host=unix:///var/run/docker.sock\n"
+              ],
+              "cap_add": [
+                "sys_admin",
+                "net_admin",
+                "sys_resource",
+                "net_raw",
+                "sys_ptrace"
+              ],
+              "cpu_hard_limit": true,
+              "dns_servers": ["10.90.0.1"],
+              "entrypoint": ["sh"],
+              "image": "127.0.0.1:5000/agentplat/sandbox@sha256:147accb19f358eb1c2ebe5a59fd943158a680ca25fa4f5ded40d8fbd23b2afaa",
+              "ipv4_address": "10.90.0.2",
+              "mount": [
+                {
+                  "target": "/var/lib/docker",
+                  "tmpfs_options": [
+                    {
+                      "size": 4294967296
+                    }
+                  ],
+                  "type": "tmpfs"
+                }
+              ],
+              "network_mode": "sbx0123456789ab",
+              "pids_limit": 4096,
+              "runtime": "kata",
+              "sysctl": [
+                {
+                  "net.ipv4.ip_forward": "1"
+                }
+              ]
+            },
+            "Constraints": null,
+            "Affinities": null,
+            "Env": {
+              "AWS_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt",
+              "CARGO_HTTP_CAINFO": "/etc/ssl/certs/ca-certificates.crt",
+              "CURL_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt",
+              "DOCKER_TLS_CERTDIR": "",
+              "GIT_SSL_CAINFO": "/etc/ssl/certs/ca-certificates.crt",
+              "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH": "/etc/ssl/certs/ca-certificates.crt",
+              "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt",
+              "NODE_USE_SYSTEM_CA": "1",
+              "NPM_CONFIG_CAFILE": "/etc/ssl/certs/ca-certificates.crt",
+              "PIP_CERT": "/etc/ssl/certs/ca-certificates.crt",
+              "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/ca-certificates.crt",
+              "SANDBOX_DNS": "10.90.0.1",
+              "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt"
+            },
+            "Services": null,
+            "Resources": {
+              "CPU": 4000,
+              "Cores": null,
+              "MemoryMB": 8192,
+              "MemoryMaxMB": null,
+              "DiskMB": null,
+              "Networks": null,
+              "Devices": null,
+              "NUMA": null,
+              "SecretsMB": null,
+              "IOPS": null
+            },
+            "RestartPolicy": null,
+            "Meta": null,
+            "KillTimeout": 30000000000,
+            "LogConfig": null,
+            "Artifacts": null,
+            "Vault": null,
+            "Consul": null,
+            "Templates": [
+              {
+                "SourcePath": null,
+                "DestPath": "local/egress-ca.pem",
+                "EmbeddedTmpl": "-----BEGIN CERTIFICATE-----\nU0FNUExFLW5vdC1hLWNlcnQ=\n-----END CERTIFICATE-----\n",
+                "ChangeMode": "noop",
+                "ChangeScript": null,
+                "ChangeSignal": null,
+                "Once": null,
+                "Splay": 5000000000,
+                "Perms": "0644",
+                "Uid": null,
+                "Gid": null,
+                "LeftDelim": null,
+                "RightDelim": null,
+                "Envvars": null,
+                "VaultGrace": null,
+                "Wait": null,
+                "ErrMissingKey": false
+              }
+            ],
+            "DispatchPayload": null,
+            "VolumeMounts": null,
+            "Leader": false,
+            "ShutdownDelay": 0,
+            "KillSignal": "",
+            "Kind": "",
+            "ScalingPolicies": null,
+            "Secrets": null,
+            "Identity": null,
+            "Identities": null,
+            "Actions": null,
+            "Schedule": null
+          }
+        ],
+        "Spreads": null,
+        "Volumes": null,
+        "RestartPolicy": {
+          "Interval": 600000000000,
+          "Attempts": 2,
+          "Delay": 5000000000,
+          "Mode": "fail",
+          "RenderTemplates": null
+        },
+        "Disconnect": null,
+        "ReschedulePolicy": {
+          "Attempts": 0,
+          "Interval": null,
+          "Delay": null,
+          "DelayFunction": null,
+          "MaxDelay": null,
+          "Unlimited": false
+        },
+        "EphemeralDisk": null,
+        "Update": null,
+        "Migrate": null,
+        "Networks": null,
+        "Meta": null,
+        "Services": null,
+        "ShutdownDelay": null,
+        "MaxRunDuration": null,
+        "StopAfterClientDisconnect": null,
+        "MaxClientDisconnect": null,
+        "Scaling": null,
+        "Consul": null,
+        "PreventRescheduleOnLost": null
+      }
+    ],
+    "Update": null,
+    "Multiregion": null,
+    "Spreads": null,
+    "Periodic": null,
+    "ParameterizedJob": null,
+    "Reschedule": null,
+    "Migrate": null,
+    "Meta": {
+      "conversation_key": "0123456789abcdef",
+      "generation": "1",
+      "template": "hands-kata-dind/v1"
+    },
+    "UI": null,
+    "Stop": null,
+    "ParentID": null,
+    "Dispatched": false,
+    "DispatchIdempotencyToken": null,
+    "Payload": null,
+    "ConsulNamespace": null,
+    "VaultNamespace": null,
+    "NomadTokenID": null,
+    "Status": null,
+    "StatusDescription": null,
+    "Stable": null,
+    "Version": null,
+    "SubmitTime": null,
+    "CreateIndex": null,
+    "ModifyIndex": null,
+    "JobModifyIndex": null,
+    "VersionTag": null
+  }
+}

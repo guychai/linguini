@@ -1,0 +1,90 @@
+# Lima instance for the Kata + Docker-in-Docker sandbox kit (handoff sections 10 and 11).
+# Create:  limactl create --name=kata-dind lima/kata-dind.yaml && limactl start kata-dind
+#
+# Every field below was checked against Lima v2.2.1 (templates/default.yaml, the VZ docs at
+# https://lima-vm.io/docs/config/vmtype/vz/ and pkg/driver/vz/vm_darwin.go) on 2026-10-11.
+minimumLimaVersion: 2.2.1
+
+# Apple Virtualization.framework. Required for nestedVirtualization on macOS (the vz driver
+# refuses below macOS 15 and on devices where VZ reports nested virtualization unsupported,
+# i.e. anything older than M3). vmType cannot be changed after the instance is created.
+vmType: vz
+# Exposes /dev/kvm in the guest so Kata can start KVM-accelerated VMs (L2). Lima's own note:
+# the inner VMM must use "-cpu host"; Kata's arm64 QEMU does.
+nestedVirtualization: true
+# Native ARM only: VZ cannot run an x86_64 guest on Apple silicon.
+arch: aarch64
+
+# Ubuntu 24.04 LTS (noble) server cloud image, pinned to the dated release and sha256 that
+# Lima v2.2.1 ships in templates/_images/ubuntu-24.04.yaml. Chosen over the 26.04 default
+# because Docker's apt repo, Kata's Docker path and published nested-virt reports on M3+
+# are all on 24.04. The dated image is removed upstream after some months; if the download
+# 404s, take the new dated URL and digest from the then-current Lima release, never an
+# undigested "release/" URL.
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+    digest: "sha256:1d6bffe64b848468ac97f821d369a4846d983de1800ccf6b5ec8853e85cefc55"
+    variant: "server"
+
+# Handoff section 11 starting point: Lima 6 vCPU / 16 GiB, holding one Kata guest of
+# 4 vCPU / 8 GiB plus the outer Docker, Nomad and page cache. On a 36 GiB Mac this leaves
+# ~20 GiB for macOS. Disk is a sparse raw image; it grows only as images and layers land.
+cpus: 6
+memory: "16GiB"
+disk: "100GiB"
+
+# No host directories inside the VM. The default template mounts the Mac home (read-only);
+# a sandbox host has no reason to see it. The kit is copied in with `limactl copy -r`.
+mounts: []
+
+# The kit installs Docker Engine itself (20-install-docker-kata.sh). Lima's bundled
+# containerd/nerdctl would be a second, unpinned runtime in the same VM.
+containerd:
+  system: false
+  user: false
+
+# Forward only the Nomad HTTP API (bound to 127.0.0.1 in the guest) to the Mac's loopback,
+# for the owned runtime's NomadKataHands. Everything else stays inside the VM; rules are
+# checked in order, so the ignore rule must stay last.
+portForwards:
+  - guestIP: "127.0.0.1"
+    guestPort: 4646
+    hostIP: "127.0.0.1"
+    hostPort: 4646
+  # guestIPMustBeZero must be false, or this rule only matches ports bound exactly on
+  # 0.0.0.0 (Lima fills it as true for guestIP 0.0.0.0) and 127.0.0.1 binds would still be
+  # forwarded by Lima's built-in fallback rule.
+  - guestIP: "0.0.0.0"
+    guestIPMustBeZero: false
+    guestPortRange: [1, 65535]
+    proto: any
+    ignore: true
+
+# Runs as root on every boot; must stay idempotent. Only loads the vhost modules Kata
+# needs (vhost_vsock for the agent channel, vhost_net for networking), per the Kata
+# installation docs; everything else is done by the guest scripts with visible output.
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      printf 'vhost_vsock\nvhost_net\n' > /etc/modules-load.d/kata-containers.conf
+      modprobe vhost_vsock || true
+      modprobe vhost_net || true
+
+# Lima's own readiness probe: fail `limactl start` visibly when nested virtualization did
+# not produce a KVM device (10-kvm-check.sh then proves it is usable, not just present).
+probes:
+  - mode: readiness
+    description: "/dev/kvm present (nested virtualization active)"
+    script: |
+      #!/bin/bash
+      set -eu -o pipefail
+      if ! timeout 30s bash -c 'until [ -c /dev/kvm ]; do sleep 2; done'; then
+        echo >&2 "/dev/kvm is missing: nested virtualization is not active in this VM"
+        exit 1
+      fi
+    hint: |
+      nestedVirtualization needs Apple M3 or newer and macOS 15 or newer, with vmType vz.
+      Run host/mac-preflight.sh on the Mac and check `limactl list --json kata-dind`.

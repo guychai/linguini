@@ -94,6 +94,22 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { isRightPanelSurfaceHidden } from "~/uiFlags";
+
+const SURFACE_KIND_BY_LABEL: Record<string, string> = {
+  Browser: "preview",
+  Terminal: "terminal",
+  Files: "files",
+  Diff: "diff",
+  "Pull request": "pull-request",
+  "Linked pull requests": "pull-requests",
+  Device: "device",
+};
+/** Owned UI flag: drops hidden surfaces from the launcher menus (and their letter shortcuts). */
+const withoutHiddenSurfaces = <T extends readonly { label: string }[]>(actions: T): T =>
+  actions.filter(
+    (action) => !isRightPanelSurfaceHidden(SURFACE_KIND_BY_LABEL[action.label] ?? ""),
+  ) as unknown as T;
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -352,7 +368,7 @@ function RightPanelEmptyState(props: {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = [
+  const actions = withoutHiddenSurfaces([
     {
       label: "Browser",
       icon: Globe2,
@@ -410,7 +426,7 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
-  ] as const;
+  ] as const);
 
   type SurfaceAction = (typeof actions)[number];
 
@@ -934,7 +950,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   }, []);
 
-  const addSurfaceActions = [
+  const addSurfaceActions = withoutHiddenSurfaces([
     {
       label: "Browser",
       icon: Globe2,
@@ -991,7 +1007,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
-  ] as const;
+  ] as const);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);

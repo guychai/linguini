@@ -45,6 +45,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { uiFlags } from "~/uiFlags";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -1272,6 +1273,7 @@ export default function FilePreviewPanel({
             </div>
           </ScrollArea>
           {absolutePath &&
+          !uiFlags.hideEditorPicker &&
           (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
             <OpenInPicker
               environmentId={environmentId}

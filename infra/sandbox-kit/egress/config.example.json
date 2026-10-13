@@ -1,0 +1,8 @@
+{
+  "policy_dir": "/run/sandbox-egress/policies",
+  "sources_dir": "/run/sandbox-egress/sources",
+  "secrets_file": "/etc/sandbox-egress/secrets.json",
+  "audit_log": "/var/log/sandbox-egress/audit.jsonl",
+  "allow_private_upstreams": [],
+  "static_hosts": {}
+}

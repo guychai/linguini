@@ -1,3 +1,4 @@
+import { restrictGeneratedContent, safeGeneratedLink } from "../lib/prototypeContentPolicy";
 import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
@@ -2473,6 +2474,7 @@ function useChatMarkdownState({
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
+    if (restrictGeneratedContent) return safeGeneratedLink(defaultUrlTransform(href));
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   // Re-emit highlighted content as markdown so copying out of the rendered
@@ -3212,6 +3214,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
+    // Do not instantiate media components or fetch signers for generated content.
+    if (restrictGeneratedContent)
+      return <span role="note">[Image blocked: {alt || "generated media"}]</span>;
     const {
       expandMedia,
       cwd,

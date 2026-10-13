@@ -1,0 +1,19 @@
+# Small Compose workload for the inner daemon: a built web service and a probe that must reach
+# it over the Compose network, then exit 0.
+name: kit
+services:
+  web:
+    build: .
+    image: kit/web:1
+    mem_limit: 128m
+    pids_limit: 64
+  probe:
+    image: docker.io/library/alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+    depends_on: [web]
+    command:
+      [
+        "sh",
+        "-c",
+        "for i in $(seq 1 30); do wget -qO- http://web:8080/ && exit 0; sleep 1; done; exit 1",
+      ]
+    mem_limit: 64m

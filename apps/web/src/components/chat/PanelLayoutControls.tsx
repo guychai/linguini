@@ -6,6 +6,7 @@ import { memo, type ReactElement } from "react";
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
+import { uiFlags } from "../../uiFlags";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface PanelLayoutControlsProps {
@@ -76,7 +77,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
-      {showThreadPanelControl
+      {showThreadPanelControl && !uiFlags.hideThreadDetails
         ? threadPanelPresentation === "popover"
           ? threadPanelTooltip(
               <PopoverTrigger handle={threadPanelPopoverHandle} render={threadPanelToggle} />,

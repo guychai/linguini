@@ -1,0 +1,33 @@
+{
+  "name": "@t3tools/owned-prototype-web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../prototypes/runtime/node_modules/tsx/dist/loader.mjs --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "effect": "catalog:",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "catalog:",
+    "tailwind-merge": "^3.4.0"
+  },
+  "devDependencies": {
+    "@rolldown/plugin-babel": "^0.2.3",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "~19.3.0",
+    "@types/react-dom": "~19.2.3",
+    "@vitejs/plugin-react": "^6.0.0",
+    "babel-plugin-react-compiler": "1.0.0",
+    "vite-plus": "catalog:"
+  }
+}

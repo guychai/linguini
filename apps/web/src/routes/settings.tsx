@@ -1,3 +1,4 @@
+import { uiFlags } from "../uiFlags";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
@@ -186,6 +187,10 @@ export const Route = createFileRoute("/settings")({
       throw redirect({ to: "/pair", replace: true });
     }
 
+    const pages = uiFlags.settingsPages;
+    if (pages?.length && !pages.includes(location.pathname)) {
+      throw redirect({ to: pages[0] as "/settings/general", replace: true });
+    }
     if (location.pathname === "/settings") {
       throw redirect({ to: "/settings/general", replace: true });
     }

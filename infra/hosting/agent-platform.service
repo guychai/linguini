@@ -1,0 +1,23 @@
+[Unit]
+Description=Agent platform (owned Pi/Postgres backend + T3 UI)
+Requires=postgresql.service
+Wants=nomad.service sandbox-egress.service tailscaled.service
+After=postgresql.service nomad.service sandbox-egress.service tailscaled.service network-online.target
+[Service]
+User=agentplat
+Group=agentplat
+SupplementaryGroups=sandbox-egress
+WorkingDirectory=/opt/agent-platform/prototypes/runtime
+EnvironmentFile=/etc/agent-platform/agent-platform.env
+EnvironmentFile=/etc/agent-platform/secrets.env
+Environment=PATH=/opt/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do ip -4 addr show tailscale0 | grep -qF "inet $${OWN_HOST}/" && exit 0; sleep 2; done; exit 1'
+ExecStart=/opt/node/bin/node --import tsx src/own-main.ts
+Restart=on-failure
+RestartSec=5
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+UMask=0027
+[Install]
+WantedBy=multi-user.target

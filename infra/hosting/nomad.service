@@ -1,0 +1,13 @@
+[Unit]
+Description=Nomad agent (single-node server+client for agent-platform sandboxes)
+Wants=network-online.target docker.service
+After=network-online.target docker.service sandbox-egress.service
+[Service]
+ExecStart=/usr/local/bin/nomad agent -config /etc/nomad.d
+KillMode=process
+KillSignal=SIGINT
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,253 @@
+@import "../../web/src/index.css";
+@source "../../web/src";
+
+/* Owned UI simplification (see ui-flags.ts): no project concept in the sidebar. */
+html[data-owned-ui] [aria-label="Add project"],
+html[data-owned-ui] [aria-label^="Filter threads by project"] {
+  display: none !important;
+}
+
+/* Sign-in / sign-up (sign-in.ts): the only owned screen, shown before upstream T3 boots.
+   With a non-default theme selected, upstream maps --background/--card/--primary/... to
+   --app-theme-* variables that only its runtime (useTheme) sets, so they are unset here.
+   Use the splash colours the inline boot script resolved for the stored theme (--boot-*,
+   set only when a theme is selected), else the default tokens, and derive the rest. */
+.lg-auth {
+  --lg-bg: var(--boot-background, var(--background, #0a0a0a));
+  --lg-fg: var(--boot-foreground, var(--foreground, #f5f5f5));
+  --lg-accent: var(--boot-accent, var(--primary, #4f46e5));
+  --lg-line: color-mix(in oklab, var(--lg-fg) 14%, transparent);
+  --lg-input-line: color-mix(in oklab, var(--lg-fg) 20%, transparent);
+  --lg-card: color-mix(in oklab, var(--lg-fg) 4%, var(--lg-bg));
+  --lg-muted: color-mix(in oklab, var(--lg-fg) 62%, var(--lg-bg));
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px;
+  background: var(--lg-bg);
+  color: var(--lg-fg);
+}
+.lg-auth-card {
+  width: 100%;
+  max-width: 360px;
+  display: grid;
+  gap: 14px;
+  padding: 28px 24px;
+  border: 1px solid var(--lg-line);
+  border-radius: 14px;
+  background: var(--lg-card);
+  color: var(--lg-fg);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.12);
+}
+.lg-auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 20px;
+}
+.lg-auth-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--lg-accent);
+  color: #fff;
+  font-size: 17px;
+}
+.lg-auth-sub {
+  margin: -6px 0 4px;
+  font-size: 13px;
+  color: var(--lg-muted);
+}
+.lg-auth label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.lg-auth input {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--lg-input-line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.lg-auth input:focus {
+  border-color: var(--lg-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--lg-accent) 25%, transparent);
+}
+.lg-auth button[type="submit"] {
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--lg-accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lg-auth button[type="submit"]:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.lg-auth-switch {
+  font-size: 13px;
+  color: var(--lg-muted);
+  text-align: center;
+}
+.lg-auth-switch button {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--lg-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.lg-auth-error {
+  min-height: 18px;
+  margin: 0;
+  font-size: 13px;
+  color: #dc2626;
+}
+
+/* Owned settings blocks (account-admin.ts): Password and the admin Users page. */
+.lg-admin-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.lg-admin-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.lg-admin-field input {
+  min-width: 200px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.lg-admin-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lg-admin-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.lg-admin-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.lg-admin-danger {
+  color: var(--destructive);
+  border-color: color-mix(in srgb, var(--destructive) 45%, transparent);
+}
+.lg-admin-status {
+  width: 100%;
+  margin: 0;
+  padding: 0 16px 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.lg-admin-error {
+  color: var(--destructive);
+}
+.lg-admin-scroll {
+  overflow-x: auto;
+}
+.lg-admin-users {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.lg-admin-users th {
+  padding: 8px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+}
+.lg-admin-users td {
+  padding: 10px 16px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+.lg-admin-users tr:last-child td {
+  border-bottom: 0;
+}
+.lg-admin-name {
+  font-weight: 500;
+}
+.lg-admin-sub {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.lg-admin-badge {
+  display: inline-block;
+  margin: 4px 4px 0 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
+.lg-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 340px;
+  margin-left: auto;
+}
+.lg-admin-confirm {
+  width: 100%;
+  font-size: 12px;
+  text-align: right;
+}
+.lg-admin-secret {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  font-size: 12px;
+  user-select: all;
+}
+.lg-admin-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+.lg-admin-result span {
+  flex: 1;
+}
+.lg-admin-dismiss {
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}

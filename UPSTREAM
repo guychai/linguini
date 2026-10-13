@@ -1,0 +1,9 @@
+# Upstream T3 Code base for this fork. Update on every sync.
+repo=https://github.com/pingdotgg/t3code
+base=42160f2925daa3c0d4ef2b95f68a87858972e6a3
+synced=2026-10-13
+# Linguini's history starts with one commit whose parent is `base`, so upstream history is shared
+# and merges have a normal merge base. To sync:
+#   git remote add upstream https://github.com/pingdotgg/t3code.git; git fetch upstream main
+#   git merge upstream/main
+# Then update base= and synced= above.

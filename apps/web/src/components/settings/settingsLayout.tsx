@@ -1,3 +1,4 @@
+import { uiFlags } from "../../uiFlags";
 import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
@@ -193,6 +194,7 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+  if (sectionProps.id && uiFlags.hiddenSettingsSections?.includes(sectionProps.id)) return null;
 
   return (
     <section

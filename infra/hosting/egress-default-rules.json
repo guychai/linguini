@@ -1,0 +1,79 @@
+[
+  {
+    "host": "registry.npmjs.org",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "pypi.org",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "files.pythonhosted.org",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "github.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "github.com",
+    "methods": ["POST"],
+    "paths": ["/*/*/git-upload-pack", "/*/*.git/git-upload-pack"]
+  },
+  {
+    "host": "codeload.github.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "objects.githubusercontent.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "raw.githubusercontent.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "api.github.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "registry-1.docker.io",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "auth.docker.io",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "production.cloudflare.docker.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "production.cloudfront.docker.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "mise.jdx.dev",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "mise-versions.jdx.dev",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "nodejs.org",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "unofficial-builds.nodejs.org",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "release-assets.githubusercontent.com",
+    "methods": ["GET", "HEAD"]
+  },
+  {
+    "host": "dl-cdn.alpinelinux.org",
+    "methods": ["GET", "HEAD"]
+  }
+]

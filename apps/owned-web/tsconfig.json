@@ -1,0 +1,43 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node",
+      "vite-plus/client"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "paths": {
+      "~/*": [
+        "../web/src/*"
+      ]
+    },
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnosticSeverity": {
+          "globalDate": "off",
+          "globalConsole": "off",
+          "globalRandom": "off",
+          "globalTimers": "off",
+          "globalFetch": "off",
+          "cryptoRandomUUID": "off",
+          "nodeBuiltinImport": "off"
+        }
+      }
+    ],
+    "erasableSyntaxOnly": false,
+    "verbatimModuleSyntax": false
+  },
+  "include": [
+    "src",
+    "../web/src",
+    "vite.config.ts"
+  ]
+}
