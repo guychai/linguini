@@ -1,0 +1,52 @@
+# Linguini CI: typecheck, tests and build for the platform code. No secrets; read-only token.
+# Upstream T3 Code workflows are not carried (see UPSTREAM).
+name: Linguini CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linguini-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Runtime (prototypes/runtime)
+        working-directory: prototypes/runtime
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Owned web UI (apps/owned-web)
+        working-directory: apps/owned-web
+        run: |
+          pnpm run typecheck
+          pnpm run test
+          pnpm run build
+      - name: Workspace typecheck
+        run: pnpm run typecheck
+      - name: Sandbox kit static checks
+        run: bash infra/sandbox-kit/tests/validate-static.sh

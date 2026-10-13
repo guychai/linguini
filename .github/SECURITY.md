@@ -1,8 +1,9 @@
 # Security policy
 
-Report security vulnerabilities affecting T3 Code or T3 Tools-operated infrastructure to
-[security@ping.gg](mailto:security@ping.gg). Please do not disclose them publicly until we have had
-a reasonable opportunity to investigate and remediate them.
+Report vulnerabilities in Linguini privately through GitHub's
+[private vulnerability reporting](https://github.com/guychai/linguini/security/advisories/new) for this repository. Please do not
+open a public issue for security problems.
 
-See the [full security policy](https://t3.codes/security-policy) for reporting details, scope,
-and safe harbor terms for good-faith research.
+Linguini is an unofficial fork of [T3 Code](https://github.com/pingdotgg/t3code). Vulnerabilities in
+upstream T3 Code itself should go to T3 Tools as described in
+[their security policy](https://github.com/pingdotgg/t3code/blob/main/.github/SECURITY.md).

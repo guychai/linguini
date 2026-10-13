@@ -7,3 +7,11 @@ synced=2026-10-13
 #   git remote add upstream https://github.com/pingdotgg/t3code.git; git fetch upstream main
 #   git merge upstream/main
 # Then update base= and synced= above.
+# Linguini does not carry upstream's GitHub automation: .github/workflows (except our own
+# linguini-ci.yml), .github/actions, .github/ISSUE_TEMPLATE, .github/pull_request_template.md,
+# .github/VOUCHED.td, .github/TRIAGE_EXEMPTIONS.td and scripts/notify-discord-release.test.ts
+# (it reads release.yml) were deleted, and .github/SECURITY.md is ours. When a sync reports a
+# modify/delete conflict on one of these, keep it deleted:
+#   git status --short | awk '$1=="DU"||$1=="UD"{print $2}' | grep -E '^(\.github/|scripts/notify-discord-release\.test\.ts$)' | xargs -r git rm -q
+# and keep ours on content conflicts in .github/SECURITY.md (git checkout --ours -- .github/SECURITY.md).
+# New upstream files under .github/workflows arrive as additions: delete them too (git rm) unless wanted.
