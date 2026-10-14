@@ -1,0 +1,17 @@
+diff --git a/apps/web/src/components/settings/settingsLayout.tsx b/apps/web/src/components/settings/settingsLayout.tsx
+index 27c6a8fee282e5d2beca140a27c726d99432973d..f1cbfedcc9b79f337ec58f3fb126d7f80820d83b 100644
+--- a/apps/web/src/components/settings/settingsLayout.tsx
++++ b/apps/web/src/components/settings/settingsLayout.tsx
+@@ -1,3 +1,4 @@
++import { uiFlags } from "../../uiFlags";
+ import { SettingsGroup } from "./SettingsGroup";
+ import { AuthSettingsWriteScope } from "@t3tools/contracts";
+ import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
+@@ -193,6 +194,7 @@ export function SettingsSection({
+   children: ReactNode;
+ }) {
+   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
++  if (sectionProps.id && uiFlags.hiddenSettingsSections?.includes(sectionProps.id)) return null;
+ 
+   return (
+     <section

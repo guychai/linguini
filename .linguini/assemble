@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# .linguini/assemble [OUT] — build tree = upstream@pin + .linguini/patches + our files (overlay).
+# OUT (default .linguini/build) becomes a git repo: tag `upstream` (pin), commit "patches", then
+# commit "overlay". Env: PIN=<sha> overrides the pin (bump uses it); BASE=<sha> also fetches the
+# commit the patches were made against (for --3way after a pin move).
+source "$(dirname "$0")/lib.sh"
+OUT=${1:-$L/build}
+PIN=${PIN_OVERRIDE:-$PIN}
+pin=$(cache_commit "$PIN")
+rm -rf "$OUT" && mkdir -p "$OUT"
+git -C "$OUT" init -q
+git -C "$OUT" fetch -q --depth 1 "$CACHE" "$pin"
+if [ -n "${BASE:-}" ] && [ "$BASE" != "$pin" ]; then
+  base=$(cache_commit "$BASE")
+  git -C "$OUT" fetch -q --depth 1 "$CACHE" "$base"
+fi
+git -C "$OUT" checkout -q --detach "$pin"
+git -C "$OUT" tag upstream
+fail=()
+for p in "$L"/patches/*.patch; do
+  [ -e "$p" ] || continue
+  if out=$(git -C "$OUT" apply --index --whitespace=nowarn "$p" 2>&1); then
+    status=clean
+  elif out=$(git -C "$OUT" apply --index --3way --whitespace=nowarn "$p" 2>&1); then
+    status=3way
+  else
+    status=FAILED
+    fail+=("$(basename "$p")")
+  fi
+  [ -n "${REPORT:-}" ] && printf '%-8s %s\n' "$status" "$(basename "$p")" >>"$REPORT"
+  [ "$status" = FAILED ] && printf 'FAILED %s\n%s\n' "$(basename "$p")" "$out" >&2
+done
+if [ ${#fail[@]} -gt 0 ]; then
+  echo "${#fail[@]} patch(es) did not apply: ${fail[*]}" >&2
+  [ -n "${KEEP_GOING:-}" ] || exit 1
+fi
+# Upstream files we do not carry (a list, so upstream edits to them never conflict).
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if [ -n "$(git -C "$OUT" ls-files -- "$f")" ]; then
+    git -C "$OUT" rm -q -r --cached -- "$f" && rm -rf "${OUT:?}/$f"
+  else
+    [ -n "${REPORT:-}" ] && printf '%-8s %s\n' gone "deleted:$f" >>"$REPORT"
+  fi
+done <"$L/deleted"
+git -C "$OUT" commit -q --allow-empty --no-verify -m "linguini patches"
+overlay_files | (cd "$ROOT" && tar --null -T - -cf -) | tar -C "$OUT" -xf -
+git -C "$OUT" add -A
+git -C "$OUT" commit -q --allow-empty --no-verify -m "linguini overlay"
+echo "assembled $OUT (upstream $pin, $(ls -A "$L"/patches | wc -l) patches, $(wc -l <"$L/deleted") deletions)" >&2

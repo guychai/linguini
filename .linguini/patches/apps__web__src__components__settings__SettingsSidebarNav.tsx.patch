@@ -1,0 +1,31 @@
+diff --git a/apps/web/src/components/settings/SettingsSidebarNav.tsx b/apps/web/src/components/settings/SettingsSidebarNav.tsx
+index 035e42b53cc222138c84bb21ecf7d3e9e9f92e57..0532aafaa0287da282f1490cec24feef8e8462fc 100644
+--- a/apps/web/src/components/settings/SettingsSidebarNav.tsx
++++ b/apps/web/src/components/settings/SettingsSidebarNav.tsx
+@@ -1,3 +1,4 @@
++import { uiFlags } from "../../uiFlags";
+ import {
+   lazy,
+   Suspense,
+@@ -115,7 +116,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+   const currentSearch = useLocation({ select: (location) => location.search });
+   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
+   const navItems = SETTINGS_NAV_ITEMS.filter(
+-    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
++    (item) =>
++      (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
++      (!uiFlags.settingsPages || uiFlags.settingsPages.includes(item.to)),
+   );
+   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
+   const searchInputRef = useRef<HTMLInputElement>(null);
+@@ -252,7 +255,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+       <SidebarContent className="overflow-x-hidden">
+         <SidebarGroup>
+           <div className="flex flex-col gap-2">
+-            <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
++            <div
++              hidden={uiFlags.settingsPages !== undefined}
++              className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
+               <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+               <SidebarInput
+                 ref={searchInputRef}

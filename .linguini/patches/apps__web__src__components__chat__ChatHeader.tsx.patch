@@ -1,0 +1,21 @@
+diff --git a/apps/web/src/components/chat/ChatHeader.tsx b/apps/web/src/components/chat/ChatHeader.tsx
+index c2b1a805011baebfdf9e24ee3e25e1aa5098520f..ab00220066643243d75a86b2aabb1a56441d18f7 100644
+--- a/apps/web/src/components/chat/ChatHeader.tsx
++++ b/apps/web/src/components/chat/ChatHeader.tsx
+@@ -3,6 +3,7 @@ import {
+   type EnvironmentId,
+   type ThreadId,
+ } from "@t3tools/contracts";
++import { uiFlags } from "../../uiFlags";
+ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+ import {
+@@ -313,7 +314,7 @@ export const ChatHeader = memo(function ChatHeader({
+         {/* The project always leads the header: knowing which project a
+             thread lives in is priority zero, and the thread title alone
+             doesn't answer it. */}
+-        {activeProject ? (
++        {activeProject && !uiFlags.hideProjects ? (
+           <>
+             <WorkspaceBreadcrumbItem className="shrink">
+               <Tooltip>

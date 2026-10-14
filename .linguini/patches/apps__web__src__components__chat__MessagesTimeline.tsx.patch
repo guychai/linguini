@@ -1,0 +1,30 @@
+diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
+index 8d3f88ea97b229151ccebf9d970ea3149d8beb93..331433b7c560dded041f10ec9b1fd386a42f67dd 100644
+--- a/apps/web/src/components/chat/MessagesTimeline.tsx
++++ b/apps/web/src/components/chat/MessagesTimeline.tsx
+@@ -120,6 +120,7 @@ import ReactMarkdown from "react-markdown";
+ import remarkGfm from "remark-gfm";
+ import type { Root, RootContent } from "mdast";
+ import { T3Wordmark } from "../T3Wordmark";
++import { APP_BASE_NAME } from "../../branding";
+ import { ThreadContextChip } from "../ThreadContextChip";
+ import {
+   BotIcon,
+@@ -2462,7 +2463,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message"
+           className="me-1 text-2xs text-muted-foreground/70"
+           data-user-message-attribution="t3code"
+         >
+-          Sent by T3 Code
++          Sent by {APP_BASE_NAME}
+         </p>
+       ) : userMessage.attribution === "agent" ? (
+         <p className="me-1 text-2xs text-muted-foreground/70" data-user-message-attribution="agent">
+@@ -2837,7 +2838,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
+   return (
+     <>
+       <div className="relative min-w-0 px-1 py-0.5">
+-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
++        <MessageAuthorHeading>{APP_BASE_NAME}</MessageAuthorHeading>
+         <div data-thread-find-text="true">
+           <AssistantCitationSource
+             messageId={row.message.id}

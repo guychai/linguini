@@ -1,0 +1,38 @@
+diff --git a/apps/web/src/rightPanelStore.ts b/apps/web/src/rightPanelStore.ts
+index fa417786a019cf83a3b142b1a968df5adb83a47c..f3422358c5a558dc28bf3f76c1ed445cf7072986 100644
+--- a/apps/web/src/rightPanelStore.ts
++++ b/apps/web/src/rightPanelStore.ts
+@@ -18,6 +18,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
+ 
+ import { useClosedViewStore } from "./closedViewStore";
+ import { resolveStorage } from "./lib/storage";
++import { isRightPanelSurfaceHidden } from "./uiFlags";
+ import type { ThreadPanelPresentation } from "./rightPanelLayout";
+ import type { ChatFileAttachment } from "./types";
+ 
+@@ -303,14 +304,17 @@ const upsertSurface = (
+   current: ThreadRightPanelState,
+   surface: RightPanelSurface,
+   activate = true,
+-): ThreadRightPanelState => ({
+-  ...current,
+-  isOpen: true,
+-  surfaces: current.surfaces.some((entry) => entry.id === surface.id)
+-    ? current.surfaces
+-    : [...current.surfaces, surface],
+-  activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
+-});
++): ThreadRightPanelState =>
++  isRightPanelSurfaceHidden(surface.kind)
++    ? current
++    : {
++        ...current,
++        isOpen: true,
++        surfaces: current.surfaces.some((entry) => entry.id === surface.id)
++          ? current.surfaces
++          : [...current.surfaces, surface],
++        activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
++      };
+ 
+ const updateThreadStateMap = (
+   byThreadKey: Record<string, ThreadRightPanelState>,

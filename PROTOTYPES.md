@@ -322,3 +322,9 @@ roles, arguments and tool IDs once, with an explicit synthetic-metadata marker.
 Missing legacy tool outcomes become errors, queued jobs are not consumed, and
 cancelled text stays aborted. Historical native metadata never recorded by the
 old prototype cannot be recovered; this migration does not claim otherwise.
+
+## Patch layout (prototype branch)
+
+On `forge/patches-prototype` the repo holds only our code plus a pinned upstream commit and
+per-file patches. `.linguini/assemble` builds the tree, `.linguini/regen` writes edits back, and
+`.linguini/bump` moves the pin. See `.linguini/README.md`.
