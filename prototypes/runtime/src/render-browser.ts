@@ -286,9 +286,12 @@ export async function runRenderJob(job: RenderJob, options: BrowserOptions): Pro
     );
     const load = async () => {
       const loaded = new Promise<void>((resolve) => (state.loaded = resolve));
+      stage = "navigating";
       const nav = await send("Page.navigate", { url: `${PAGE_URL}${job.fragment}` }, sessionId);
       if (nav.errorText) throw new Error("the page could not be opened");
+      stage = "waiting for the load event";
       await Promise.race([loaded, exited]);
+      stage = "settling (fonts, frames)";
       await send(
         "Runtime.evaluate",
         { expression: SETTLE_EXPRESSION, awaitPromise: true },
@@ -328,6 +331,7 @@ export async function runRenderJob(job: RenderJob, options: BrowserOptions): Pro
   };
 
   let timer: NodeJS.Timeout | undefined;
+  let stage = "starting";
   const work = async (): Promise<RenderOutput> => {
     const out: RenderOutput = { consoleMessages: [] };
     if (job.captureWidth !== undefined) {
@@ -368,7 +372,9 @@ export async function runRenderJob(job: RenderJob, options: BrowserOptions): Pro
         timer = setTimeout(
           () =>
             reject(
-              new Error(`the page did not finish loading within ${options.timeoutMs / 1000}s`),
+              new Error(
+                `the page did not finish loading within ${options.timeoutMs / 1000}s (${stage})`,
+              ),
             ),
           options.timeoutMs,
         );

@@ -38,6 +38,14 @@ jobs:
       # default; the visual-replies browser test runs with the sandbox on, as in production.
       - name: Allow unprivileged user namespaces (Chrome sandbox)
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # The render browser test uses the same pinned headless shell as the dev VM (50-render-worker.sh).
+      - name: Chrome headless shell (pinned)
+        run: |
+          v=155.0.8059.79
+          curl -fsSL -o /tmp/chs.zip "https://storage.googleapis.com/chrome-for-testing-public/$v/linux64/chrome-headless-shell-linux64.zip"
+          echo "4cea4c32b501aa43cc2b81eb45734af991a6a82feded48380d6dfaf96642a1c1  /tmp/chs.zip" | sha256sum -c -
+          unzip -q /tmp/chs.zip -d /tmp/chs
+          echo "CHROMIUM_PATH=/tmp/chs/chrome-headless-shell-linux64/chrome-headless-shell" >> "$GITHUB_ENV"
       - name: Runtime (prototypes/runtime)
         working-directory: prototypes/runtime
         run: |
