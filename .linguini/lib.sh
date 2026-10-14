@@ -26,3 +26,8 @@ overlay_files() {
     while IFS= read -r -d '' f; do [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ] && printf '%s\0' "$f"; done
 }
 patch_name() { printf '%s.patch' "$(printf '%s' "$1" | sed 's#/#__#g')"; }
+# A digest of everything assemble reads (pin, patches, deleted list, our files).
+inputs_digest() {
+  { cat "$L/upstream.pin" "$L/deleted"; for p in "$L"/patches/*.patch; do sha256sum "$p"; done
+    overlay_files | (cd "$ROOT" && xargs -0 -r sha256sum); } | sha256sum | cut -d' ' -f1
+}

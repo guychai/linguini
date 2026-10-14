@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# .linguini/status [OUT] — is the assembled tree in sync with this repo?
+#   exit 0: in sync (or no build tree); 1: unsaved edits in OUT (run .linguini/regen);
+#   2: the repo changed since OUT was assembled (re-run .linguini/assemble).
+source "$(dirname "$0")/lib.sh"
+OUT=${1:-$L/build}
+[ -d "$OUT/.git" ] || exit 0
+rc=0
+changed=$( { git -C "$OUT" status --porcelain; git -C "$OUT" log --oneline assembled..HEAD; } | wc -l)
+if [ "$changed" -gt 0 ]; then
+  echo "linguini: $OUT has unsaved edits ($changed): run .linguini/regen, then commit here" >&2
+  git -C "$OUT" status --short | head -10 >&2
+  rc=1
+elif [ "$(cat "$OUT/.git/linguini-inputs" 2>/dev/null)" != "$(inputs_digest)" ]; then
+  echo "linguini: the repo changed since $OUT was assembled: run .linguini/assemble" >&2
+  rc=2
+fi
+exit $rc

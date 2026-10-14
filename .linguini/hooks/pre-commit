@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Opt-in: git config core.hooksPath .linguini/hooks
+# Warns when .linguini/build has edits not written back with .linguini/regen. Set
+# LINGUINI_STRICT=1 to block the commit instead.
+root=$(git rev-parse --show-toplevel)
+"$root/.linguini/status" && exit 0
+rc=$?
+[ "$rc" = 1 ] && [ "${LINGUINI_STRICT:-}" = 1 ] && { echo "commit blocked (LINGUINI_STRICT=1)" >&2; exit 1; }
+exit 0

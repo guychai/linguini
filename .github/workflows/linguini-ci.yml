@@ -32,11 +32,12 @@ jobs:
       - name: Assemble the build tree
         run: .linguini/assemble
       # Regenerating from an untouched assembled tree must reproduce the patches exactly.
-      - name: Patches round-trip
+      - name: Patches reproduce (forgotten or hand-edited patches fail here)
         run: |
           .linguini/regen
-          git status --porcelain -- .linguini
-          test -z "$(git status --porcelain -- .linguini)"
+          git status --porcelain
+          test -z "$(git status --porcelain)"
+          .linguini/status
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: .linguini/build/package.json

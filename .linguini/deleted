@@ -5,6 +5,15 @@
 .github/VOUCHED.td
 .github/actions/setup-apt-mirrors/action.yml
 .github/pull_request_template.md
+.github/scripts/check-nightly-release.cjs
+.github/scripts/check-nightly-release.test.cjs
+.github/scripts/mirror-play-apk.cjs
+.github/scripts/relay-state-output.test.cjs
+.github/scripts/stage-preview-bundle.py
+.github/scripts/stage-preview-bundle.test.py
+.github/scripts/thread-transfer-report.cjs
+.github/scripts/thread-transfer-report.test.cjs
+.github/triage/PLAYBOOK.md
 .github/workflows/ci.yml
 .github/workflows/cursor-hygiene-webhook.yml
 .github/workflows/deploy-relay.yml

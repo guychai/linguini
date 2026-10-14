@@ -47,4 +47,6 @@ git -C "$OUT" commit -q --allow-empty --no-verify -m "linguini patches"
 overlay_files | (cd "$ROOT" && tar --null -T - -cf -) | tar -C "$OUT" -xf -
 git -C "$OUT" add -A
 git -C "$OUT" commit -q --allow-empty --no-verify -m "linguini overlay"
+git -C "$OUT" tag assembled
+inputs_digest >"$OUT/.git/linguini-inputs"
 echo "assembled $OUT (upstream $pin, $(ls -A "$L"/patches | wc -l) patches, $(wc -l <"$L/deleted") deletions)" >&2

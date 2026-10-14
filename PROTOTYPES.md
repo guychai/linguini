@@ -323,8 +323,12 @@ Missing legacy tool outcomes become errors, queued jobs are not consumed, and
 cancelled text stays aborted. Historical native metadata never recorded by the
 old prototype cannot be recovered; this migration does not claim otherwise.
 
-## Patch layout (prototype branch)
+## Repo layout: upstream pin + patches
 
-On `forge/patches-prototype` the repo holds only our code plus a pinned upstream commit and
-per-file patches. `.linguini/assemble` builds the tree, `.linguini/regen` writes edits back, and
-`.linguini/bump` moves the pin. See `.linguini/README.md`.
+The repo holds only Linguini's code. Upstream T3 Code is pinned in `.linguini/upstream.pin` and
+changed by per-file patches in `.linguini/patches/`, and upstream files we drop are listed in
+`.linguini/deleted`. `.linguini/assemble` builds the full tree in `.linguini/build`, which is
+where you build, test, and edit. `.linguini/regen` writes edits back, `.linguini/status` (or the
+opt-in pre-commit hook) catches edits not yet written back, and `.linguini/bump` moves the pin.
+CI assembles first and checks that the patches reproduce. Deploys use
+`infra/hosting/deploy-dev.sh`. Details: `.linguini/README.md`.

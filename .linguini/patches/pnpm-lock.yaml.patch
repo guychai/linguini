@@ -1,5 +1,5 @@
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index acce8eb8928443bb752ffcff7e51db5098595119..4a79c54add0c2f6db40dee819721f8008960c55f 100644
+index b6cc9b75ca88de44fe8c75613a870224069d46d0..9d8f6203cb446e16b3f12a1a7ba85e248392ebf3 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -604,6 +604,61 @@ importers:
