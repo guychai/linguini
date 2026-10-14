@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -359,7 +360,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
       const ws = new WebSocket(
         `ws://127.0.0.1:${r.port}/api/terminal-stream?kind=attach&threadId=${id}&terminalId=default`,
         {
-          headers: { cookie: B, "sec-fetch-site": "same-origin" },
+          headers: { cookie: B, origin: `http://127.0.0.1:${r.port}` },
         },
       );
       const first = await new Promise<string>((res, rej) => {
@@ -369,7 +370,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
       assert.match(first, /"status":"starting"/);
       ws.close();
       const wsMeta = new WebSocket(`ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`, {
-        headers: { cookie: B, "sec-fetch-site": "same-origin" },
+        headers: { cookie: B, origin: `http://127.0.0.1:${r.port}` },
       });
       await once(wsMeta, "open");
       wsMeta.close();
@@ -567,9 +568,16 @@ test("previews: session cookie never reaches the sandbox app; grant is scoped; s
       403,
     );
   }
-  // Terminal WebSocket: the session cookie only works on a same-origin upgrade, and a bogus
+  // Terminal WebSocket: the session cookie needs an Origin matching the Host, and a bogus
   // bearer subprotocol does not exempt it.
-  for (const extra of [{}, { "sec-fetch-site": "cross-site" }]) {
+  for (const extra of [
+    {},
+    { "sec-fetch-site": "same-origin" },
+    { origin: "null" },
+    { origin: "http://evil.example" },
+    { origin: `http://127.0.0.1:${r.port + 1}` },
+    { origin: `http://127.0.0.1:${r.port}`, referer: `http://127.0.0.1:${r.port}${path}` },
+  ]) {
     for (const protocols of [undefined, ["t3.bearer.bogus"]]) {
       const ws = new WebSocket(
         `ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`,
@@ -585,7 +593,8 @@ test("previews: session cookie never reaches the sandbox app; grant is scoped; s
     }
   }
   const ok = new WebSocket(`ws://127.0.0.1:${r.port}/api/terminal-stream?kind=metadata`, {
-    headers: { cookie: a.cookie, "sec-fetch-site": "same-origin" },
+    // A real browser sends Origin but no Sec-Fetch-Site on the handshake.
+    headers: { cookie: a.cookie, origin: `http://127.0.0.1:${r.port}` },
   });
   await once(ok, "open");
   ok.close();
@@ -609,3 +618,75 @@ test("static shell: served without a session (the app shows its own sign-in scre
   const svc = await r.as(null, "/api/session", { headers: { authorization: `Bearer ${r.token}` } });
   assert.equal(((await svc.json()) as { owner: string }).owner, "service-owner");
 });
+
+// Real browser: headers a test can set by hand (Sec-Fetch-Site on a WebSocket handshake) may not
+// be what a browser sends. Chromium (CHROMIUM_PATH, /usr/bin/chromium or google-chrome) opens
+// the terminal WebSocket with the session cookie; required in CI.
+const chromiumPath = [
+  process.env.CHROMIUM_PATH,
+  "/usr/bin/chromium",
+  "/usr/bin/google-chrome",
+].find((p) => p && existsSync(p));
+test(
+  "browser: terminal WebSocket and API work from the app's origin, not from another origin",
+  { skip: chromiumPath || process.env.CI ? false : "no Chromium found" },
+  async (t) => {
+    assert.ok(chromiumPath, "Chromium is required in CI (set CHROMIUM_PATH)");
+    const { chromium } = await import("playwright-core");
+    const dir = await mkdtemp(join(tmpdir(), "mu-br-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const store = new SqliteStore(join(dir, "s.sqlite"));
+    t.after(() => store.close());
+    const r = await rig(t, store);
+    const a = await r.signUp("br@x.example");
+    const other = createServer((_q, res) => res.end("<p>other origin</p>"));
+    other.listen(0, "127.0.0.1");
+    await once(other, "listening");
+    t.after(() => other.close());
+    const otherPort = (other.address() as { port: number }).port;
+    const browser = await chromium.launch({
+      executablePath: chromiumPath,
+      headless: true,
+      args: ["--no-sandbox"],
+    });
+    t.after(() => browser.close());
+    const ctx = await browser.newContext();
+    const [name, ...value] = a.cookie.split("=");
+    await ctx.addCookies([
+      { name: name!, value: value.join("="), domain: "127.0.0.1", path: "/", sameSite: "Lax" },
+    ]);
+    const page = await ctx.newPage();
+    // A string, not a function: tsx's keepNames helper (__name) does not exist in the page.
+    const probe = (p: typeof page, b: string) =>
+      p.evaluate(`(async () => {
+        const b = ${JSON.stringify(b)};
+        const ws = await new Promise((res) => {
+          const w = new WebSocket(b.replace("http", "ws") + "/api/terminal-stream?kind=metadata");
+          w.onopen = () => { w.close(); res("open"); };
+          w.onerror = () => res("error");
+          setTimeout(() => res("timeout"), 5000);
+        });
+        const api = async (headers) => {
+          try {
+            return (await fetch(b + "/api/conversations", { headers, credentials: "include" })).status;
+          } catch {
+            return "error";
+          }
+        };
+        return { ws, withHeader: await api({ "x-linguini-client": "1" }), withoutHeader: await api({}) };
+      })()`) as Promise<{
+        ws: string;
+        withHeader: number | string;
+        withoutHeader: number | string;
+      }>;
+    const base = `http://127.0.0.1:${r.port}`;
+    await page.goto(`${base}/health`);
+    assert.deepEqual(await probe(page, base), { ws: "open", withHeader: 200, withoutHeader: 403 });
+    assert.ok(r.termListeners.includes(`meta ${a.id}`));
+    await page.goto(`http://127.0.0.1:${otherPort}/`);
+    const cross = await probe(page, base);
+    assert.equal(cross.ws, "error", "another origin cannot open the terminal socket");
+    assert.notEqual(cross.withoutHeader, 200);
+    assert.notEqual(cross.withHeader, 200);
+  },
+);
