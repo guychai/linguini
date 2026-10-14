@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# .linguini/bump [REF] [--write] — try the patches on upstream REF (default: main). Reports each
+# patch: clean, 3way (applied via 3-way merge), FAILED. With --write and no failures: moves the
+# pin, regenerates the patches against it, and refreshes pnpm-lock.yaml if its patch failed
+# (RELOCK=1 forces: pnpm install --lockfile-only in the assembled tree).
+source "$(dirname "$0")/lib.sh"
+REF=main WRITE=
+for a in "$@"; do case $a in --write) WRITE=1 ;; *) REF=$a ;; esac; done
+[ -d "$CACHE" ] || git init -q --bare "$CACHE"
+git -C "$CACHE" fetch -q --depth 1 "$UPSTREAM_URL" "$REF"
+new=$(git -C "$CACHE" rev-parse FETCH_HEAD)
+OUT=$(mktemp -d)/build
+REPORT=$(mktemp)
+echo "bump: $PIN -> $new" >&2
+KEEP_GOING=1 REPORT=$REPORT BASE=$PIN PIN_OVERRIDE=$new "$L/assemble" "$OUT" 2>/dev/null || true
+lock_failed=$(grep -c '^FAILED *pnpm-lock.yaml.patch' "$REPORT" || true)
+if [ "$lock_failed" != 0 ] || [ -n "${RELOCK:-}" ]; then
+  echo "pnpm-lock.yaml: relocking from upstream's lock" >&2
+  git -C "$OUT" checkout -q upstream -- pnpm-lock.yaml
+  (cd "$OUT" && pnpm install --lockfile-only --ignore-scripts >/dev/null) &&
+    sed -i 's/^FAILED *pnpm-lock.yaml.patch/relocked pnpm-lock.yaml.patch/' "$REPORT"
+fi
+sort "$REPORT" | awk '{print $1}' | uniq -c >&2
+grep -v '^clean' "$REPORT" || true
+failed=$(grep -c '^FAILED' "$REPORT" || true)
+if [ -n "$WRITE" ]; then
+  [ "$failed" = 0 ] || { echo "not writing: $failed patch(es) failed (fix in $OUT, then regen)" >&2; exit 1; }
+  "$L/regen" "$OUT"
+  sed -i "s/^commit=.*/commit=$new/" "$L/upstream.pin"
+  echo "pin moved to $new" >&2
+fi
+echo "assembled tree: $OUT" >&2
+[ "$failed" = 0 ]

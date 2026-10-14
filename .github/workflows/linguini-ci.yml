@@ -1,5 +1,7 @@
 # Linguini CI: typecheck, tests and build for the platform code. No secrets; read-only token.
 # Upstream T3 Code workflows are not carried (see UPSTREAM).
+# Patch layout: the repo holds only our code; CI first assembles the build tree (upstream at
+# .linguini/upstream.pin + .linguini/patches + our files) and runs everything in it.
 name: Linguini CI
 
 on:
@@ -23,16 +25,29 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/linguini-upstream.git
+          key: linguini-upstream-${{ hashFiles('.linguini/upstream.pin') }}
+      - name: Assemble the build tree
+        run: .linguini/assemble
+      # Regenerating from an untouched assembled tree must reproduce the patches exactly.
+      - name: Patches reproduce (forgotten or hand-edited patches fail here)
+        run: |
+          .linguini/regen
+          git status --porcelain
+          test -z "$(git status --porcelain)"
+          .linguini/status
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: .linguini/build/package.json
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
+          cache-dependency-path: .linguini/build/pnpm-lock.yaml
       - name: Install workspace
+        working-directory: .linguini/build
         run: pnpm install --frozen-lockfile
       # Chrome's sandbox needs unprivileged user namespaces, which Ubuntu's AppArmor restricts by
       # default; the visual-replies browser test runs with the sandbox on, as in production.
@@ -47,18 +62,20 @@ jobs:
           unzip -q /tmp/chs.zip -d /tmp/chs
           echo "CHROMIUM_PATH=/tmp/chs/chrome-headless-shell-linux64/chrome-headless-shell" >> "$GITHUB_ENV"
       - name: Runtime (prototypes/runtime)
-        working-directory: prototypes/runtime
+        working-directory: .linguini/build/prototypes/runtime
         run: |
           npm ci
           npm run typecheck
           npm test
       - name: Owned web UI (apps/owned-web)
-        working-directory: apps/owned-web
+        working-directory: .linguini/build/apps/owned-web
         run: |
           pnpm run typecheck
           pnpm run test
           pnpm run build
       - name: Workspace typecheck
+        working-directory: .linguini/build
         run: pnpm run typecheck
       - name: Sandbox kit static checks
+        working-directory: .linguini/build
         run: bash infra/sandbox-kit/tests/validate-static.sh

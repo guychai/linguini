@@ -1,0 +1,18 @@
+diff --git a/.gitignore b/.gitignore
+index 38bac103f1f41851f2e2a2b403149330abed73ad..084fb78418ed917cf29c427f071aca17e571651f 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -12,6 +12,8 @@ packages/*/dist
+ .env
+ .env.local
+ build/
++# The sandbox kit's inner-Docker workload (step 40) is source, not build output.
++!infra/sandbox-kit/inner/build/
+ .logs/
+ release/
+ release-mock/
+@@ -45,3 +47,4 @@ node_modules/
+ 
+ # pnpm content-addressable store; never belongs in the repo.
+ .pnpm-store/
++prototypes/*/dist/

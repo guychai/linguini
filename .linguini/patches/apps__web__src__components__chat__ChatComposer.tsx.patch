@@ -1,0 +1,84 @@
+diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
+index 80ef5ecd054b585046faf93678566a2e89b004b4..6b49988cb3dff8a187f6183e664c1e69739db1af 100644
+--- a/apps/web/src/components/chat/ChatComposer.tsx
++++ b/apps/web/src/components/chat/ChatComposer.tsx
+@@ -1,3 +1,4 @@
++import * as L from "./linguiniComposer";
+ import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+ import { useComposerTypingGuard } from "./useComposerTypingGuard";
+ import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
+@@ -267,7 +268,7 @@ import {
+ } from "~/state/pullRequests";
+ import { useEnvironmentQuery } from "~/state/query";
+ import { useDebouncedValue } from "~/state/queries";
+-import { ProviderModelPicker } from "./ProviderModelPicker";
++import { ProviderModelPicker } from "./linguiniComposer";
+ import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
+ import {
+   type ComposerCommandItem,
+@@ -1272,7 +1273,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
+ 
+   const interactionModeToggle = props.showInteractionModeToggle ? (
+     <>
+-      <ComposerControlSeparator size={size} />
++      <L.InteractionModeSeparator size={size} />
+       <Tooltip>
+         <TooltipTrigger
+           render={
+@@ -1310,9 +1311,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
+ 
+   return (
+     <>
+-      <ComposerControlSeparator size={size} />
++      <L.RuntimeModeSeparator size={size} />
+ 
+-      <Tooltip>
++      <L.RuntimeModeTooltip>
+         <Select
+           open={open}
+           onOpenChange={setOpen}
+@@ -1358,7 +1359,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
+           </SelectPopup>
+         </Select>
+         <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
+-      </Tooltip>
++      </L.RuntimeModeTooltip>
+ 
+       {interactionModeToggle}
+     </>
+@@ -3042,7 +3043,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+     planModeEnabled: settings.planModeEnabled,
+     isComposerOwned: true,
+   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
+-  const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
++  const providerTraitsPicker = L.renderProviderTraitsPicker(providerTraitsPickerInput);
+   const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
+     null,
+   );
+@@ -5508,7 +5509,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+   const iconOnlyBlockCount = composerControlsCollapsed
+     ? restingControlsIconOnlyBlockCount
+     : expandedControlsLayout.iconOnlyBlockCount;
+-  const restingProviderTraitsPicker = renderProviderTraitsPicker({
++  const restingProviderTraitsPicker = L.renderProviderTraitsPicker({
+     ...providerTraitsPickerInput,
+     size: composerControlsCollapsed ? "xs" : "sm",
+     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+@@ -5542,7 +5543,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+         />
+       ),
+     },
+-  ];
++  ].filter(L.restingBlockShown(planModeUiEnabled));
+   const hiddenRestingBlockIds = restingBlockDefs
+     .slice(restingBlockDefs.length - restingHiddenBlockCount)
+     .map((def) => def.id);
+@@ -5566,7 +5567,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+       {composerControlsCollapsed &&
+       restingControlsHost !== null &&
+       restingControlsHaveLeadingContext ? (
+-        <ComposerControlSeparator
++        <L.ModelPickerSeparator
+           size="xs"
+           className="@max-[400px]/composer-surface:hidden"
+           data-resting-controls-separator="true"

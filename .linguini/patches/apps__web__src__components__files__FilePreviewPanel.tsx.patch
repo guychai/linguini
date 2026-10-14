@@ -1,0 +1,20 @@
+diff --git a/apps/web/src/components/files/FilePreviewPanel.tsx b/apps/web/src/components/files/FilePreviewPanel.tsx
+index 4c0767ad5af4c9a362fcbc986d9a440c5553f9df..b1c3bc33344a10a56ff552a9d436495ab70ac64a 100644
+--- a/apps/web/src/components/files/FilePreviewPanel.tsx
++++ b/apps/web/src/components/files/FilePreviewPanel.tsx
+@@ -45,6 +45,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
+ import { OpenInPicker } from "~/components/chat/OpenInPicker";
++import { uiFlags } from "~/uiFlags";
+ import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
+ import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
+ import { MorphIcon } from "~/components/MorphIcon";
+@@ -1272,6 +1273,7 @@ export default function FilePreviewPanel({
+             </div>
+           </ScrollArea>
+           {absolutePath &&
++          !uiFlags.hideEditorPicker &&
+           (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+             <OpenInPicker
+               environmentId={environmentId}

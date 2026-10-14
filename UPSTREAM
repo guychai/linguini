@@ -1,17 +1,18 @@
-# Upstream T3 Code base for this fork. Update on every sync.
-repo=https://github.com/pingdotgg/t3code
-base=42160f2925daa3c0d4ef2b95f68a87858972e6a3
-synced=2026-10-13
-# Linguini's history starts with one commit whose parent is `base`, so upstream history is shared
-# and merges have a normal merge base. To sync:
-#   git remote add upstream https://github.com/pingdotgg/t3code.git; git fetch upstream main
-#   git merge upstream/main
-# Then update base= and synced= above.
-# Linguini does not carry upstream's GitHub automation: .github/workflows (except our own
-# linguini-ci.yml), .github/actions, .github/ISSUE_TEMPLATE, .github/pull_request_template.md,
-# .github/VOUCHED.td, .github/TRIAGE_EXEMPTIONS.td and scripts/notify-discord-release.test.ts
-# (it reads release.yml) were deleted, and .github/SECURITY.md is ours. When a sync reports a
-# modify/delete conflict on one of these, keep it deleted:
-#   git status --short | awk '$1=="DU"||$1=="UD"{print $2}' | grep -E '^(\.github/|scripts/notify-discord-release\.test\.ts$)' | xargs -r git rm -q
-# and keep ours on content conflicts in .github/SECURITY.md (git checkout --ours -- .github/SECURITY.md).
-# New upstream files under .github/workflows arrive as additions: delete them too (git rm) unless wanted.
+# Upstream T3 Code base for Linguini (patch layout).
+# The pin lives in .linguini/upstream.pin (repo= and commit=). This repo does not contain
+# upstream's files: .linguini/assemble builds the tree from the pin, .linguini/patches (one per
+# upstream file we change) and .linguini/deleted (upstream files we don't carry), plus our own
+# files. To sync:
+#   .linguini/bump            # try the patches on upstream main; reports clean / 3way / FAILED
+#   .linguini/bump main --write   # move the pin and regenerate the patches (needs no failures)
+#   then assemble, typecheck/test/build in .linguini/build, commit, open a PR.
+# A FAILED patch: fix the file in the tree bump printed, then `.linguini/regen <that tree>`.
+# Linguini does not carry upstream's GitHub automation. .github/workflows (except our
+# linguini-ci.yml), .github/actions, .github/scripts, .github/triage, .github/ISSUE_TEMPLATE,
+# .github/pull_request_template.md, .github/VOUCHED.td, .github/TRIAGE_EXEMPTIONS.td and
+# scripts/notify-discord-release.test.ts (it reads release.yml) are in .linguini/deleted, and
+# .github/SECURITY.md is ours (a patch). After a bump, add new upstream files under
+# .github/workflows, .github/scripts and similar automation to .linguini/deleted (delete them in the
+# assembled tree, then regen) unless we want them.
+# History: until 2026-10-14 this was a fork that merged upstream. The last fork merge base was
+# 4d73e1d5cdd32dbfb470e9422421cc40475d5e99.

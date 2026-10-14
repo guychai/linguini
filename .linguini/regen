@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# .linguini/regen [OUT] — write edits made in an assembled tree back: changes to upstream files
+# become .linguini/patches/<path>.patch (one per file), deleted upstream files are listed in
+# .linguini/deleted; added files are ours and
+# are copied back to their own path here; our files deleted in OUT are deleted here.
+source "$(dirname "$0")/lib.sh"
+OUT=${1:-$L/build}
+# A build tree assembled before the repo last changed would undo those changes (our new files
+# would be deleted, edited ones reverted). Refuse unless FORCE=1.
+if [ -z "${FORCE:-}" ] && [ -f "$OUT/.git/linguini-inputs" ] &&
+  [ "$(cat "$OUT/.git/linguini-inputs")" != "$(inputs_digest)" ]; then
+  echo "regen: $OUT is older than the repo (re-assemble, or FORCE=1 to overwrite the repo from it)" >&2
+  exit 2
+fi
+git -C "$OUT" add -A
+rm -f "$L"/patches/*.patch && mkdir -p "$L/patches"
+: >"$L/deleted"
+declare -A ours=()
+while IFS= read -r -d '' f; do ours["$f"]=1; done < <(overlay_files)
+n=0
+while IFS= read -r -d '' st && IFS= read -r -d '' f; do
+  if [ -n "$(git -C "$OUT" ls-tree upstream -- "$f")" ] && [ "$st" = D ]; then
+    printf '%s\n' "$f" >>"$L/deleted"
+  elif [ -n "$(git -C "$OUT" ls-tree upstream -- "$f")" ]; then
+    git -C "$OUT" diff --cached --binary --full-index --no-renames upstream -- "$f" >"$L/patches/$(patch_name "$f")"
+    n=$((n + 1))
+  else
+    mkdir -p "$ROOT/$(dirname "$f")"
+    if [ "$st" = D ]; then rm -f "$ROOT/$f"; else cp -a "$OUT/$f" "$ROOT/$f"; fi
+    unset "ours[$f]"
+  fi
+done < <(git -C "$OUT" diff --cached --name-status -z --no-renames upstream)
+# Overlay files no longer in OUT were deleted there.
+for f in "${!ours[@]}"; do [ -e "$OUT/$f" ] || { rm -f "$ROOT/$f"; echo "deleted ours: $f" >&2; }; done
+LC_ALL=C sort -o "$L/deleted" "$L/deleted"
+# The build tree now matches the repo again (status: clean).
+git -C "$OUT" commit -q --allow-empty --no-verify -m "linguini regen" && git -C "$OUT" tag -f assembled >/dev/null
+inputs_digest >"$OUT/.git/linguini-inputs"
+echo "wrote $n patches, $(wc -l <"$L/deleted") deletions" >&2
