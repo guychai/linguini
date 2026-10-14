@@ -11,7 +11,7 @@
  * 6. S3: every object under sandboxes/<workspaceId>/ (snapshot and side-by-side
  *    after-failed-restore copies).
  * 7. Rows: journal + conversation row in one transaction (Store.purge, the only path the
- *    append-only trigger admits); preview-port rows cascade.
+ *    append-only trigger admits); preview-port and visual-reply (html render) rows cascade.
  *
  * Every step is idempotent. A failure leaves the tombstone in place and the sweeper (startup and
  * periodic) finishes the job; it also removes orphans: jobs, policy files, networks and

@@ -1,0 +1,43 @@
+[Unit]
+Description=Linguini render worker (headless Chromium for visual replies; no network)
+After=local-fs.target
+[Service]
+# Its own non-root user: Chrome's sandbox stays on, and it can read none of agentplat's config,
+# secrets or data. The backend (group linguini-render) talks to it over the unix socket only.
+User=linguini-render
+Group=linguini-render
+WorkingDirectory=/opt/agent-platform/prototypes/runtime
+Environment=PATH=/opt/node/bin:/usr/bin:/bin
+Environment=RENDER_SOCKET=/run/linguini-render/render.sock
+Environment=CHROMIUM_PATH=/opt/chrome-headless-shell/current/chrome-headless-shell
+Environment=RENDER_CONCURRENCY=2
+Environment=RENDER_TIMEOUT_MS=20000
+ExecStart=/opt/node/bin/node --import tsx src/render-worker-main.ts
+RuntimeDirectory=linguini-render
+RuntimeDirectoryMode=0750
+UMask=0007
+# No network at all (only a loopback of its own): pages cannot reach anything even if the
+# browser's own blocking failed.
+PrivateNetwork=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+# Chrome's sandbox needs user namespaces, so RestrictNamespaces is not set.
+MemoryMax=2G
+TasksMax=512
+CPUQuota=200%
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

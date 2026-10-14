@@ -49,6 +49,11 @@ export const DEFAULT_TOOL_POLICIES: ToolPolicies = Object.freeze({
   // Exposes the sandbox port to the conversation's owner over the tailnet only; no egress.
   share_port: { replay: "idempotent-write", destination: "sandbox", egress: false },
   unshare_port: { replay: "idempotent-write", destination: "sandbox", egress: false },
+  // Visual replies: the page is rendered by Linguini's render worker, which has no network, and
+  // reads images only from this sandbox (files API). html_render stores the page in this
+  // conversation under an ID derived from the call, so a repeat finds the same page.
+  html_preview: { replay: "safe-read", destination: "sandbox", egress: false },
+  html_render: { replay: "idempotent-write", destination: "sandbox", egress: false },
 });
 /** PR creation and publishing: egress to a publication destination. */
 export const PUBLICATION_POLICY: ToolPolicy = Object.freeze({

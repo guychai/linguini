@@ -369,6 +369,8 @@ test(
         "edit",
         "find",
         "grep",
+        "html_preview",
+        "html_render",
         "ls",
         "read",
         "share_port",

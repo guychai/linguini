@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, utimes, readdir } from "node:fs/promises";
@@ -163,6 +164,13 @@ for (const kind of ["sqlite", "postgres"] as const)
         const { PostgresPreviewPorts } = await import("./preview.ts");
         const ports = await PostgresPreviewPorts.open(database!);
         await ports.share("o", kept, { port: 3000, label: "", cspSandbox: true });
+        const { PostgresRenderStore } = await import("./visual.ts");
+        const renders = await PostgresRenderStore.open(database!);
+        const rid = `${randomBytes(16).toString("hex")}-html`;
+        await renders.put(
+          { id: rid, owner: "o", conversationId: kept, title: "t", height: 100, html: "<p>x</p>" },
+          1e9,
+        );
         const { default: pg } = await import("pg");
         const c = new pg.Client({ connectionString: database });
         await c.connect();
@@ -178,6 +186,8 @@ for (const kind of ["sqlite", "postgres"] as const)
           [kept],
         );
         assert.equal(left.rows[0].n, 0);
+        assert.equal(await renders.get(rid), null, "visual reply pages go with the conversation");
+        await renders.close();
         await c.end();
       }
     },

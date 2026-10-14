@@ -1119,6 +1119,11 @@ export class HandsSandbox implements SandboxProvider {
         conversationId: string,
         call: ToolCall,
       ) => Promise<{ text: string; envFile: string }>;
+      /**
+       * html_preview / html_render (control plane: rendered by the render worker, images read
+       * from this sandbox through the files API). visual.ts.
+       */
+      visualTools?: (owner: string, conversationId: string, call: ToolCall) => Promise<ToolResult>;
     } = {},
   ) {
     this.egressBoundary = options.egress ? "proxy" : "none";
@@ -1182,6 +1187,11 @@ export class HandsSandbox implements SandboxProvider {
         outputLimitBytes: this.options.outputLimitBytes ?? 256 * 1024,
       });
     const args = call.args;
+    if (call.tool === "html_preview" || call.tool === "html_render") {
+      if (!this.options.visualTools)
+        throw new ApiError(501, "Visual replies are not configured on this server");
+      return this.options.visualTools(owner, conversationId, call);
+    }
     if (call.tool === "share_port" || call.tool === "unshare_port") {
       if (!this.options.previewTools)
         throw new ApiError(501, "Preview ports are not configured on this server");

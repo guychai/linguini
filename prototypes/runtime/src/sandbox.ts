@@ -35,7 +35,9 @@ export type ToolName =
   | "find"
   | "ls"
   | "share_port"
-  | "unshare_port";
+  | "unshare_port"
+  | "html_preview"
+  | "html_render";
 /** Ledger boundaries, in order. Fault hooks fire at each one (tests kill the process there). */
 export type LedgerBoundary =
   | "before-intent"
@@ -60,6 +62,14 @@ export interface ToolCall {
 export interface ToolResult {
   text: string;
   productionData?: boolean;
+  /** Images for the model only (html_preview's screenshot). Never persisted: see persisted(). */
+  images?: Array<{ mimeType: string; data: string }>;
+}
+/** What the ledger, receipts and journal keep of a result: never the images (they can be MBs). */
+export function persisted(result: ToolResult): ToolResult {
+  if (!result.images) return result;
+  const { images: _images, ...rest } = result;
+  return rest;
 }
 export interface ExecuteOptions {
   idempotencyKey?: string;
@@ -536,16 +546,17 @@ export class SandboxBroker {
         callId: call.id,
       });
     }
+    const kept = persisted(result);
     entry.status = "observed";
-    entry.observation = result;
+    entry.observation = kept;
     delete entry.error;
-    state.receipts[`tool:${call.id}`] = { fingerprint: fingerprint(call), result };
+    state.receipts[`tool:${call.id}`] = { fingerprint: fingerprint(call), result: kept };
     append(state, "tool.result", {
       tool: call.tool,
       callId: call.id,
       execId: entry.execId,
       attempt: entry.attempts,
-      ...result,
+      ...kept,
     });
   }
   /** Answers a call the ledger already holds, applying its declared replay class. */
@@ -707,7 +718,7 @@ export class SandboxBroker {
         currentEpoch: state.epoch ?? 0,
         statusAtArrival: e.status,
         ...(fence ? { worker: fence.worker } : {}),
-        result,
+        result: persisted(result),
       });
       append(state, "tool.late_observation", {
         execId,

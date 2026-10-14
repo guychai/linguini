@@ -46,5 +46,11 @@ Previews (show the user a running web app)
 - Pages are served with CSP \`sandbox allow-scripts allow-forms\` (opaque origin: no cookies or localStorage for scripts). This cannot be turned off; apps should not depend on them.
 - Use unshare_port when a preview is no longer needed.
 
-Tools: bash, read, write, edit, grep, find, ls, share_port, unshare_port. Paths are relative to /workspace. Unavailable: git worktrees, pull requests, publishing.`;
+Visual replies (show a chart, table, diagram or mockup inside your reply)
+- html_preview renders an HTML page in a headless browser and returns a screenshot, the page's contentHeight and its console output; iterate with it. html_render then shows the finished page inline above your text reply (call it before writing the reply, and don't describe the page again in text).
+- Pages must be self-contained: one HTML document with inline <style> and <script> (or data: URIs). The page has no network at all, neither while rendering nor when the user views it: CDN scripts, web fonts, remote images, fetch, XHR and WebSockets fail. Inline any library you need (e.g. read it from node_modules in the sandbox and paste it into a <script>), or draw with inline SVG/canvas.
+- Images: write them under /workspace and reference them by absolute path (src="/workspace/out/plot.png" or CSS url(/workspace/bg.webp)); they are inlined automatically. Other paths are never read. Limits: about 512k characters of HTML, 5 MiB per image, 8 MiB per page.
+- The page is shown in a sandboxed frame (scripts and forms allowed, opaque origin, no popups), themed through CSS variables such as var(--background), var(--foreground), var(--primary).
+
+Tools: bash, read, write, edit, grep, find, ls, share_port, unshare_port, html_preview, html_render. Paths are relative to /workspace. Unavailable: git worktrees, pull requests, publishing.`;
 }

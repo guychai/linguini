@@ -1,12 +1,12 @@
 [Unit]
 Description=Agent platform (owned Pi/Postgres backend + T3 UI)
 Requires=postgresql.service
-Wants=nomad.service sandbox-egress.service tailscaled.service
+Wants=nomad.service sandbox-egress.service tailscaled.service linguini-render.service
 After=postgresql.service nomad.service sandbox-egress.service tailscaled.service network-online.target
 [Service]
 User=agentplat
 Group=agentplat
-SupplementaryGroups=sandbox-egress
+SupplementaryGroups=sandbox-egress linguini-render
 WorkingDirectory=/opt/agent-platform/prototypes/runtime
 EnvironmentFile=/etc/agent-platform/agent-platform.env
 EnvironmentFile=/etc/agent-platform/secrets.env

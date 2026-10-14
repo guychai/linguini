@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { HTML_PARAM_DESCRIPTIONS, HTML_TOOL_DESCRIPTIONS } from "./html-render.ts";
 import type { ToolCall, ToolName, ToolResult } from "./sandbox.ts";
 
 /** What each tool really does in the sandbox (kept in step with sandboxArgv in hands.ts). */
@@ -15,6 +16,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   share_port:
     "Share a port of this sandbox as a browser preview for the user. The server must listen on 0.0.0.0 (not 127.0.0.1) and serve under the base path in the returned URL. `label` is a short name shown to the user. Pages are always served with CSP `sandbox allow-scripts allow-forms` (opaque origin: no cookies or localStorage for scripts). Returns the preview URL; idempotent.",
   unshare_port: "Stop sharing a previously shared preview port.",
+  ...HTML_TOOL_DESCRIPTIONS,
 };
 export function sandboxTools(
   execute: (call: ToolCall, signal?: AbortSignal) => Promise<ToolResult>,
@@ -49,6 +51,20 @@ export function sandboxTools(
       label: Type.Optional(Type.String()),
     }),
     unshare_port: Type.Object({ port: Type.Number() }),
+    html_preview: Type.Object({
+      html: Type.String({ description: HTML_PARAM_DESCRIPTIONS.html }),
+      width: Type.Optional(Type.Number({ description: HTML_PARAM_DESCRIPTIONS.width })),
+      appearance: Type.Optional(
+        Type.Union([Type.Literal("dark"), Type.Literal("light")], {
+          description: HTML_PARAM_DESCRIPTIONS.appearance,
+        }),
+      ),
+    }),
+    html_render: Type.Object({
+      html: Type.String({ description: HTML_PARAM_DESCRIPTIONS.html }),
+      title: Type.String({ description: HTML_PARAM_DESCRIPTIONS.title }),
+      height: Type.Number({ description: HTML_PARAM_DESCRIPTIONS.height }),
+    }),
   };
   return (Object.entries(schemas) as Array<[ToolName, (typeof schemas)[ToolName]]>).map(
     ([name, parameters]) => ({
@@ -64,7 +80,14 @@ export function sandboxTools(
           signal,
         );
         return {
-          content: [{ type: "text" as const, text: result.text }],
+          content: [
+            { type: "text" as const, text: result.text },
+            ...(result.images ?? []).map((image) => ({
+              type: "image" as const,
+              data: image.data,
+              mimeType: image.mimeType,
+            })),
+          ],
           details: { sandbox: true, productionData: result.productionData === true },
         };
       },

@@ -1,6 +1,6 @@
 import type { ConversationDeleter } from "./deletion.ts";
 import { applySettle, promoteOnPin, SETTLE_ACTIONS, type SettleAction } from "./settlement.ts";
-import { browserCsp } from "./browser-policy.ts";
+import { appCsp } from "./browser-policy.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual, createHash } from "node:crypto";
 import { readFile, stat, realpath } from "node:fs/promises";
@@ -12,6 +12,7 @@ import { Engine, type Command } from "./engine.ts";
 import type { TerminalManager } from "./terminal.ts";
 import { attachTerminalStreams, originAllowed, terminalHttp } from "./terminal-api.ts";
 import type { SandboxFiles } from "./files.ts";
+import type { VisualReplies } from "./visual.ts";
 import {
   browserRequestAllowed,
   fromPreview,
@@ -81,6 +82,8 @@ export function api(
     terminals?: TerminalManager;
     /** Read-only Files panel over the conversation's sandbox /workspace (files.ts). */
     files?: Pick<SandboxFiles, "list" | "read" | "search" | "write">;
+    /** Visual replies (visual.ts): signed page URLs and the page route. */
+    renders?: Pick<VisualReplies, "mintUrl" | "serve">;
     previews?: {
       ports: PreviewPortStore;
       proxy?: (resolveOwner: (r: IncomingMessage) => Promise<string | undefined>) => PreviewProxy;
@@ -151,6 +154,7 @@ export function api(
       });
     response.setHeader("Referrer-Policy", "no-referrer");
     response.setHeader("X-Content-Type-Options", "nosniff");
+    const browserCsp = appCsp(request.headers.host, options.renders !== undefined);
     response.setHeader("Content-Security-Policy", browserCsp);
     const json = (status: number, value: unknown) => {
       response.writeHead(status, {
@@ -169,6 +173,14 @@ export function api(
           model: process.env.PI_MODEL ?? "claude-sonnet-4-5",
           thinkingLevel: process.env.PI_THINKING_LEVEL ?? null,
         });
+        return;
+      }
+      // Visual reply pages: signed URL, served with the render sandbox CSP (visual.ts). A signed-in
+      // browser must be the page's owner; better-auth mode needs a session (the frame sends it).
+      if (options.renders && url.pathname.startsWith("/render/")) {
+        const who = await authenticate(request).catch(() => undefined);
+        const requester = who ? who.owner : users ? "" : null;
+        await options.renders.serve(request, response, url, requester);
         return;
       }
       if (!url.pathname.startsWith("/api/") && request.method === "GET" && webDist) {
@@ -315,6 +327,12 @@ export function api(
           return;
         }
         throw new ApiError(405, "Method not allowed");
+      }
+      if (url.pathname === "/api/renders/url" && request.method === "POST") {
+        if (!options.renders) throw new ApiError(404, "Render not found");
+        const input = (await body(request)) as Record<string, unknown>;
+        json(200, await options.renders.mintUrl(owner, input.attachmentId));
+        return;
       }
       if (url.pathname === "/api/session" && request.method === "GET") {
         const u = auth.user;
