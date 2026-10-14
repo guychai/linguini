@@ -186,7 +186,19 @@ export class PiHarness implements Harness {
       resourceLoader: loader,
       sessionManager,
       noTools: "builtin",
-      tools: ["read", "write", "edit", "bash", "grep", "find", "ls", "share_port", "unshare_port"],
+      tools: [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "grep",
+        "find",
+        "ls",
+        "share_port",
+        "unshare_port",
+        "html_preview",
+        "html_render",
+      ],
       customTools: sandboxTools(async (call, signal) => {
         signal?.throwIfAborted();
         // Persist the assistant/tool-call linkage before executing any side effect.
@@ -246,7 +258,11 @@ export class PiHarness implements Harness {
         next("tool.output", {
           tool: e.toolName,
           callId: e.toolCallId,
-          text: result?.content?.map((c) => c.text ?? "").join("\n") ?? "",
+          text:
+            result?.content
+              ?.filter((c) => c.type === "text")
+              .map((c) => c.text ?? "")
+              .join("\n") ?? "",
           isError: e.isError,
           productionData: result?.details?.productionData === true,
         });

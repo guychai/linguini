@@ -43,6 +43,7 @@ import {
   scopes,
   configureHarness,
 } from "./projection.ts";
+import { renderAssetUrl } from "./render-assets.ts";
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 const token = () => sessionStorage.getItem("owned-prototype-token") ?? "";
@@ -141,6 +142,8 @@ export async function invoke(tag: string, raw: unknown): Promise<unknown> {
     });
   // File chips ask for host file metadata; the browser never sees host paths, so every
   // entry is "unknown" (null) and chips fall back to their name-based icon.
+  // Visual replies (html_render): the card's page URL.
+  if (tag === "assets.createUrl") return renderAssetUrl(input.resource, request);
   if (tag === "filesystem.getMetadata")
     return { entries: (input.paths as unknown[]).map(() => null) };
   // Automations are not part of the owned backend: an empty, read-only list.

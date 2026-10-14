@@ -104,6 +104,13 @@ case "$op" in
     trap - EXIT
     sha256sum -- "$target" | cut -c1-64
     ;;
+  image)
+    # Visual replies: one sandbox image as base64, at most lim bytes (exit 16 when larger).
+    resolve "$arg"; [ -f "$t" ] || exit 13
+    size=$(stat -L -c %s -- "$t") || exit 11
+    [ "$size" -le "$lim" ] || exit 16
+    head -c "$lim" -- "$t" | base64 -w0
+    ;;
   search)
     cd -- "$root" && find . -mindepth 1 -maxdepth 12 \( -name .git -o -name node_modules -o -name .cache \) -prune -o -ipath "*$arg*" -printf '%Y %P\0' 2>/dev/null | head -z -n $((lim + 1))
     ;;
@@ -234,6 +241,38 @@ export class SandboxFiles {
     const version = r.stdout.trim();
     await this.o.onWrite?.(owner, id, rel);
     return { relativePath: rel, version };
+  }
+  /**
+   * An image for a visual reply: the file's bytes (realpath-confined to /workspace like every
+   * other op), or null when it is missing, not a regular file, outside /workspace or too large.
+   */
+  async readImage(
+    owner: string,
+    id: string,
+    path: string,
+    maxBytes: number,
+  ): Promise<Buffer | null> {
+    let rel: string;
+    try {
+      rel = workspacePath(path, false);
+    } catch {
+      return null;
+    }
+    try {
+      const r = await this.run(
+        owner,
+        id,
+        "image",
+        rel,
+        maxBytes,
+        Math.ceil(maxBytes / 3) * 4 + 256,
+      );
+      if (r.truncated) return null;
+      return Buffer.from(r.stdout.trim(), "base64");
+    } catch (e) {
+      if (e instanceof ApiError && [400, 403, 404, 413].includes(e.status)) return null;
+      throw e;
+    }
   }
   async read(owner: string, id: string, path: unknown) {
     const rel = workspacePath(path, false);

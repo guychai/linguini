@@ -508,13 +508,14 @@ test("taking a lease marks a previous epoch's interrupted non-idempotent call un
 test("production policy: write is non-idempotent until the remote honours idempotency keys", async () => {
   assert.equal(DEFAULT_TOOL_POLICIES.write!.replay, "non-idempotent");
   // Sandbox tools stay non-idempotent; only the preview share/unshare (a keyed upsert/delete in
-  // Linguini's own database, plus rewriting one env file) is idempotent by construction.
+  // Linguini's own database, plus rewriting one env file) and html_render (a page stored under an
+  // ID derived from the call) are idempotent by construction.
   assert.deepEqual(
     Object.entries(DEFAULT_TOOL_POLICIES)
       .filter(([, p]) => p.replay === "idempotent-write")
       .map(([name]) => name)
       .sort(),
-    ["share_port", "unshare_port"],
+    ["html_render", "share_port", "unshare_port"],
   );
   const t = await local(DEFAULT_TOOL_POLICIES);
   try {

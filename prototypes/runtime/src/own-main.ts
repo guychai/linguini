@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { workerId } from "./worker-id.ts";
-import { PostgresStore } from "./store.ts";
+import { ApiError, PostgresStore } from "./store.ts";
 import { FixtureSandbox, RemoteSandbox, SandboxBroker } from "./sandbox.ts";
 import {
   CommandNetworkProvisioner,
@@ -38,6 +38,8 @@ import { sandboxQuota, type HandsBinding } from "./hands.ts";
 import { PostgresSettings, effectiveModel, settingsPolicyFromEnv } from "./users.ts";
 import { authConfigFromEnv, createAuth } from "./auth.ts";
 import { createHmac } from "node:crypto";
+import { PostgresRenderStore, VisualReplies, renderSigningKey } from "./visual.ts";
+import { LocalRenderer, SocketRenderer, type Renderer } from "./render-worker.ts";
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("Set DATABASE_URL for an owned prototype database");
@@ -221,6 +223,11 @@ const provider =
           {
             ...(egressWriter ? { egress: egressWriter, egressRules: rulesFor } : {}),
             ...(previewTools ? { previewTools } : {}),
+            visualTools: (o: string, i: string, call) => {
+              if (!visual)
+                throw new ApiError(501, "Visual replies are not configured on this server");
+              return visual.execute(o, i, call);
+            },
           },
         )
       : new FixtureSandbox();
@@ -307,6 +314,31 @@ const files =
           }),
       })
     : undefined;
+// Visual replies (html_preview / html_render, visual.ts). Pages are rendered by the render worker
+// (RENDER_SOCKET: linguini-render.service, its own non-root user, no network); the backend never
+// runs Chromium. RENDER_IN_PROCESS=1 (local single-user dev only) runs it here instead.
+const renderer: Renderer | undefined = process.env.RENDER_SOCKET
+  ? new SocketRenderer(process.env.RENDER_SOCKET)
+  : process.env.RENDER_IN_PROCESS === "1"
+    ? new LocalRenderer({
+        executable: process.env.CHROMIUM_PATH ?? "/usr/bin/chromium",
+        timeoutMs: Number(process.env.RENDER_TIMEOUT_MS ?? 20_000),
+      })
+    : undefined;
+const renderFiles = files;
+const visual: VisualReplies | undefined =
+  renderer && renderFiles
+    ? new VisualReplies({
+        renderer,
+        store: await PostgresRenderStore.open(url),
+        readImage: (owner, id) => (rel, max) => renderFiles.readImage(owner, id, rel, max),
+        conversationExists: async (o, i) => void (await store.snapshot(o, i, { events: false })),
+        signingKey: renderSigningKey(process.env.BETTER_AUTH_SECRET),
+        quotaBytes: (Number(process.env.RENDER_QUOTA_MB) || 200) * 1024 * 1024,
+        globalConcurrency: Number(process.env.RENDER_CONCURRENCY) || 2,
+        perUserConcurrency: Number(process.env.RENDER_PER_USER_CONCURRENCY) || 1,
+      })
+    : undefined;
 const terminalCapMs = parseDuration(process.env.TERMINAL_KEEPALIVE_CAP ?? "2h");
 const reaper =
   kataHands && idleMs > 0
@@ -366,6 +398,7 @@ const { server, closeStreams } = api(
     deleter,
     terminals,
     ...(files ? { files } : {}),
+    ...(visual ? { renders: visual } : {}),
     ...(previewPorts && previewTools && kataHands
       ? {
           previews: {

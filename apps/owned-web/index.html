@@ -2,9 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- frame-src 'self': visual reply pages only; the backend's CSP header narrows it to
+         <host>/render/ (pages there are sandboxed with their own CSP). -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self' 'sha256-66N88M2Gs4tvXNc8z6k+OKKok8OCKne3d83NpL7KJ9A=' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+      content="default-src 'none'; script-src 'self' 'sha256-66N88M2Gs4tvXNc8z6k+OKKok8OCKne3d83NpL7KJ9A=' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'"
     />
     <meta name="referrer" content="no-referrer" />
     <meta
