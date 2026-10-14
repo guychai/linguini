@@ -132,7 +132,10 @@ export function attachTerminalStreams(
         if (!owner) return reject(socket, 401, "Unauthorized");
         wss.handleUpgrade(request, socket, head, (ws) => void serve(ws, owner, url));
       },
-      () => reject(socket, 500, "Internal Server Error"),
+      (e) =>
+        e instanceof ApiError && e.status === 403
+          ? reject(socket, 403, "Forbidden")
+          : reject(socket, 500, "Internal Server Error"),
     );
   });
   async function waitForConversation(

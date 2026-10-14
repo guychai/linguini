@@ -12,6 +12,7 @@ import {
   fromPreview,
   parsePreviewPath,
   previewEnvFile,
+  previewResponseHeaders,
   previewToolHandler,
   rewriteSetCookie,
   validPort,
@@ -151,17 +152,41 @@ test("preview headers: cookies/auth/identity stripped, preview cookies scoped, C
   assert.equal(res.headers["referrer-policy"], "same-origin");
   const redirect = await r.get(`${base}/redirect`);
   assert.equal(redirect.headers.location, `${base}/login`);
+  // There is no opt-out: a store-level cspSandbox: false is ignored.
   await r.ports.share("alice", "c1", { port: r.appPort, cspSandbox: false });
-  assert.equal((await r.get(`${base}/`)).headers["content-security-policy"], undefined, "opt-out");
+  assert.equal(
+    (await r.get(`${base}/`)).headers["content-security-policy"],
+    PREVIEW_CSP,
+    "no opt-out",
+  );
   assert.equal((await r.ports.get("alice", "c1", r.appPort))?.label, "app", "label kept on update");
-  // Re-sharing without an explicit opt-out restores the sandbox (no sticky opt-out).
   const again = await r.ports.share("alice", "c1", { port: r.appPort });
   assert.equal(again.cspSandbox, true);
   assert.equal(again.label, "app");
   assert.equal((await r.get(`${base}/`)).headers["content-security-policy"], PREVIEW_CSP);
 });
 
-test("share_port tool: re-share without cspSandbox resets an earlier opt-out", async () => {
+test("previewResponseHeaders: always sandboxed; origin-wide headers dropped", () => {
+  const out = previewResponseHeaders(
+    {
+      "service-worker-allowed": "/",
+      "clear-site-data": '"cookies", "storage"',
+      "content-security-policy": "default-src 'self'",
+      "set-cookie": ["linguini.session_token=evil; Path=/", "__Secure-linguini.session_token=x"],
+    },
+    "/preview/c1/3000/",
+  );
+  assert.equal(out["service-worker-allowed"], undefined);
+  assert.equal(out["clear-site-data"], undefined);
+  assert.deepEqual(out["content-security-policy"], ["default-src 'self'", PREVIEW_CSP]);
+  const set = out["set-cookie"] as string[];
+  assert.ok(
+    set.every((c) => c.startsWith("lpv_")),
+    set.join(" | "),
+  );
+});
+
+test("share_port tool: cspSandbox cannot be turned off", async () => {
   const ports = new MemoryPreviewPorts();
   const h = previewToolHandler({
     ports,
@@ -172,7 +197,7 @@ test("share_port tool: re-share without cspSandbox resets an earlier opt-out", a
     tool: "share_port",
     args: { port: 3000, cspSandbox: false },
   });
-  assert.equal((await ports.get("alice", "c1", 3000))?.cspSandbox, false);
+  assert.equal((await ports.get("alice", "c1", 3000))?.cspSandbox, true);
   const out = await h("alice", "c1", {
     tool: "share_port",
     args: { port: 3000 },
@@ -353,12 +378,6 @@ test("share_port tool: validates, records, returns URL and env file", async () =
   assert.match(out.envFile, /PREVIEW_BASE_URL_5173='https:\/\/t3\.example\/preview\/c1\/5173\/'/);
   await assert.rejects(h("alice", "c1", { tool: "share_port", args: { port: 2375 } }));
   await assert.rejects(h("alice", "c1", { tool: "share_port", args: { port: 0 } }));
-  await assert.rejects(
-    h("alice", "c1", {
-      tool: "share_port",
-      args: { port: 3000, cspSandbox: "no" },
-    }),
-  );
   const off = await h("alice", "c1", {
     tool: "unshare_port",
     args: { port: 5173 },
@@ -377,7 +396,7 @@ test("share_port tool: validates, records, returns URL and env file", async () =
 });
 
 test(
-  "Postgres preview ports: re-share without cspSandbox resets an opt-out; label kept",
+  "Postgres preview ports: always sandboxed (no opt-out); label kept",
   { skip: process.env.TEST_DATABASE_URL ? false : "TEST_DATABASE_URL not set" },
   async () => {
     const { PostgresStore, initial } = await import("./store.ts");
@@ -391,10 +410,10 @@ test(
       assert.equal((await ports.share("alice", id, { port: 3000, label: "web" })).cspSandbox, true);
       assert.equal(
         (await ports.share("alice", id, { port: 3000, cspSandbox: false })).cspSandbox,
-        false,
+        true,
       );
       const again = await ports.share("alice", id, { port: 3000 });
-      assert.equal(again.cspSandbox, true, "opt-out does not stick");
+      assert.equal(again.cspSandbox, true);
       assert.equal(again.label, "web", "label kept");
       assert.equal((await ports.get("alice", id, 3000))?.cspSandbox, true);
       await assert.rejects(ports.share("bob", id, { port: 3000 }), /not found/i);
