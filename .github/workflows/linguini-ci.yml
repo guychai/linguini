@@ -34,6 +34,10 @@ jobs:
           cache: pnpm
       - name: Install workspace
         run: pnpm install --frozen-lockfile
+      # Chrome's sandbox needs unprivileged user namespaces, which Ubuntu's AppArmor restricts by
+      # default; the visual-replies browser test runs with the sandbox on, as in production.
+      - name: Allow unprivileged user namespaces (Chrome sandbox)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Runtime (prototypes/runtime)
         working-directory: prototypes/runtime
         run: |

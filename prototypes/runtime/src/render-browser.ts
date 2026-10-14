@@ -126,9 +126,10 @@ export async function runRenderJob(job: RenderJob, options: BrowserOptions): Pro
     detached: true,
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: profile, TMPDIR: profile },
   });
+  // The first lines say why a launch failed (e.g. no usable sandbox); a crash dump follows.
   let stderr = "";
   child.stderr!.on("data", (d: Buffer) => {
-    stderr = (stderr + d.toString()).slice(-2048);
+    if (stderr.length < 1024) stderr = (stderr + d.toString()).slice(0, 1024);
   });
   const toChrome = child.stdio[3] as Writable;
   const fromChrome = child.stdio[4] as Readable;
@@ -145,7 +146,7 @@ export async function runRenderJob(job: RenderJob, options: BrowserOptions): Pro
   };
   child.on("error", (e) => fail(new Error(`the browser could not be started: ${e.message}`)));
   child.on("exit", () =>
-    fail(new Error(`the browser exited unexpectedly${stderr ? `: ${stderr.slice(-500)}` : ""}`)),
+    fail(new Error(`the browser exited unexpectedly${stderr ? `: ${stderr.slice(0, 600)}` : ""}`)),
   );
   toChrome.on("error", () => undefined);
   const write = (msg: Record<string, unknown>) => {
