@@ -248,10 +248,12 @@ export const CLIENT_HEADER = "x-linguini-client";
  * same-origin preview cannot pass either: previews are always CSP-sandboxed (opaque origin, so
  * the browser reports `cross-site`). Requests without these headers (old browsers, curl) are
  * refused too; service clients use a bearer token instead (callers skip this check for them).
+ * HTTP only: browsers send no Sec-Fetch-Site on WebSocket handshakes (see api.ts).
  */
-export function browserRequestAllowed(request: IncomingMessage, websocket = false) {
-  if (request.headers["sec-fetch-site"] !== "same-origin") return false;
-  return websocket || request.headers[CLIENT_HEADER] === "1";
+export function browserRequestAllowed(request: IncomingMessage) {
+  return (
+    request.headers["sec-fetch-site"] === "same-origin" && request.headers[CLIENT_HEADER] === "1"
+  );
 }
 const DROP_REQUEST =
   /^(cookie|authorization|proxy-authorization|forwarded|x-forwarded-.*|x-real-ip|tailscale-.*|x-tailscale-.*)$/i;

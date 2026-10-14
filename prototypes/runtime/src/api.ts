@@ -127,10 +127,14 @@ export function api(
   };
   const resolveOwner = async (request: IncomingMessage, wsToken?: string) =>
     (await authenticate(request, wsToken))?.owner;
-  /** Terminal WebSocket: like resolveOwner, but browser credentials need a same-origin upgrade. */
+  /**
+   * Terminal WebSocket: like resolveOwner, but browser credentials need an Origin that matches
+   * the Host. Browsers do not send Sec-Fetch-Site on WebSocket handshakes, so Origin is the check
+   * here (Origin "null" and /preview/ Referers are already refused in terminal-api.ts).
+   */
   const resolveSocketOwner = async (request: IncomingMessage, wsToken?: string) => {
     const auth = await authenticate(request, wsToken);
-    if (auth && !auth.viaToken && !browserRequestAllowed(request, true))
+    if (auth && !auth.viaToken && (!request.headers.origin || !originAllowed(request)))
       throw new ApiError(403, "Cross-site request refused");
     return auth?.owner;
   };
