@@ -616,8 +616,8 @@ importers:
         specifier: ^0.7.1
         version: 0.7.1
       effect:
-        specifier: 4.0.2
-        version: 4.0.2(patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688)
+        specifier: 4.0.4
+        version: 4.0.4
       react:
         specifier: 19.2.6
         version: 19.2.6
