@@ -1,5 +1,5 @@
 diff --git a/apps/web/src/components/settings/SettingsPanels.tsx b/apps/web/src/components/settings/SettingsPanels.tsx
-index e408312cddf9d64630d8ae1889ab146805c01932..8220fbb96e21eee343e2910f6dec4b6bc4d772b1 100644
+index ef60c9e3c3c433a52e5e21c990914b6480283f07..59c88957ff4788d742a6a0dd65a7c4c256ddb2c5 100644
 --- a/apps/web/src/components/settings/SettingsPanels.tsx
 +++ b/apps/web/src/components/settings/SettingsPanels.tsx
 @@ -1,3 +1,4 @@
@@ -7,7 +7,7 @@ index e408312cddf9d64630d8ae1889ab146805c01932..8220fbb96e21eee343e2910f6dec4b6b
  import { SettingsGroup } from "./SettingsGroup";
  import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
  import { Spinner } from "~/components/ui/spinner";
-@@ -1157,6 +1158,13 @@ function BackgroundActivityAdvancedDialog({
+@@ -1159,6 +1160,13 @@ function BackgroundActivityAdvancedDialog({
    );
  }
  
@@ -21,7 +21,7 @@ index e408312cddf9d64630d8ae1889ab146805c01932..8220fbb96e21eee343e2910f6dec4b6b
  export function AppearanceSettingsPanel() {
    const {
      appearanceMode,
-@@ -1198,6 +1206,26 @@ export function AppearanceSettingsPanel() {
+@@ -1200,6 +1208,26 @@ export function AppearanceSettingsPanel() {
  
    return (
      <SettingsPageContainer>

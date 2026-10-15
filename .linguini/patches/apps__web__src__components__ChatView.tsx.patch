@@ -1,5 +1,5 @@
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index ae891d75193ea69b3ecc58b86c8c66512564d430..91ef9ce4dba9e9c64ffc579007c8da4e6d885df5 100644
+index f87663989a8f1bfdac02f2e70f69fcc45e4e3539..0e8acab5b2446d19039848b41555ab22e8cc9b65 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
 @@ -1,4 +1,5 @@
@@ -8,7 +8,7 @@ index ae891d75193ea69b3ecc58b86c8c66512564d430..91ef9ce4dba9e9c64ffc579007c8da4e
  import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
  import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
  import {
-@@ -4270,7 +4271,9 @@ export default function ChatView(props: ChatViewProps) {
+@@ -4344,7 +4345,9 @@ export default function ChatView(props: ChatViewProps) {
        rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
      }
    }, [environmentId, gitStatusCwd, liveIsGitRepo]);
@@ -19,7 +19,7 @@ index ae891d75193ea69b3ecc58b86c8c66512564d430..91ef9ce4dba9e9c64ffc579007c8da4e
    // When context is enabled, keep a hidden, off-flow strip mounted so the composer
    // can measure whether its relocated controls fit. The visible chrome remains
    // content-driven: Git/environment context or controls that actually fit.
-@@ -12056,7 +12059,7 @@ export default function ChatView(props: ChatViewProps) {
+@@ -11772,7 +11775,7 @@ export default function ChatView(props: ChatViewProps) {
                </AlertDialogPopup>
              </AlertDialog>
  
