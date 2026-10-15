@@ -1,5 +1,5 @@
 diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
-index 80ef5ecd054b585046faf93678566a2e89b004b4..6b49988cb3dff8a187f6183e664c1e69739db1af 100644
+index 80ef5ecd054b585046faf93678566a2e89b004b4..ea2c3cb725328a914378828281a588485f49f606 100644
 --- a/apps/web/src/components/chat/ChatComposer.tsx
 +++ b/apps/web/src/components/chat/ChatComposer.tsx
 @@ -1,3 +1,4 @@
@@ -55,7 +55,26 @@ index 80ef5ecd054b585046faf93678566a2e89b004b4..6b49988cb3dff8a187f6183e664c1e69
    const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
      null,
    );
-@@ -5508,7 +5509,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -5294,8 +5295,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+     setIsComposerModelPickerOpen(false);
+   }
+   useLayoutEffect(() => {
+-    onRestingControlsVisibilityChange(composerControlsVisibleInStrip);
+-  }, [composerControlsVisibleInStrip, onRestingControlsVisibilityChange]);
++    onRestingControlsVisibilityChange(
++      composerControlsVisibleInStrip &&
++        !L.restingControlsEmpty(planModeUiEnabled, showProviderUnavailable),
++    );
++  }, [
++    composerControlsVisibleInStrip,
++    onRestingControlsVisibilityChange,
++    planModeUiEnabled,
++    showProviderUnavailable,
++  ]);
+   useLayoutEffect(() => {
+     onRestingChange(isComposerResting);
+   }, [isComposerResting, onRestingChange]);
+@@ -5508,7 +5517,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    const iconOnlyBlockCount = composerControlsCollapsed
      ? restingControlsIconOnlyBlockCount
      : expandedControlsLayout.iconOnlyBlockCount;
@@ -64,7 +83,7 @@ index 80ef5ecd054b585046faf93678566a2e89b004b4..6b49988cb3dff8a187f6183e664c1e69
      ...providerTraitsPickerInput,
      size: composerControlsCollapsed ? "xs" : "sm",
      hidden: composerControlsHidden || restingHiddenBlockCount > 1,
-@@ -5542,7 +5543,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -5542,7 +5551,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
          />
        ),
      },
@@ -73,7 +92,7 @@ index 80ef5ecd054b585046faf93678566a2e89b004b4..6b49988cb3dff8a187f6183e664c1e69
    const hiddenRestingBlockIds = restingBlockDefs
      .slice(restingBlockDefs.length - restingHiddenBlockCount)
      .map((def) => def.id);
-@@ -5566,7 +5567,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -5566,7 +5575,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
        {composerControlsCollapsed &&
        restingControlsHost !== null &&
        restingControlsHaveLeadingContext ? (
