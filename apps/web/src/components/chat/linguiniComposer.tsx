@@ -44,3 +44,10 @@ export const restingBlockShown =
   (planModeUiEnabled: boolean) =>
   (def: { readonly id: string }): boolean =>
     !(hideRuntime && !planModeUiEnabled && def.id === "mode");
+/**
+ * True when every resting control is hidden (no model/traits, no runtime picker, no plan toggle, no
+ * provider warning). The composer then reports nothing to show in the strip under the collapsed
+ * composer, so the empty bordered tray stays hidden (it was a leftover box on mobile).
+ */
+export const restingControlsEmpty = (planModeUiEnabled: boolean, providerUnavailable: boolean) =>
+  hideModel && hideRuntime && !planModeUiEnabled && !providerUnavailable;
