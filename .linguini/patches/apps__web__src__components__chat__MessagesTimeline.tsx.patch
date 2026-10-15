@@ -1,5 +1,5 @@
 diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx
-index d490b980e5f0005155e137228f15bb367d36722b..e7a5d01005bd293b3321584ab67198dac1e47917 100644
+index 3ac4952e89c86b1c61f9a887f2b92023808499b4..1a9b32ca894c6c15671e8f7a8011ef6ea6b83861 100644
 --- a/apps/web/src/components/chat/MessagesTimeline.tsx
 +++ b/apps/web/src/components/chat/MessagesTimeline.tsx
 @@ -120,6 +120,7 @@ import ReactMarkdown from "react-markdown";
