@@ -1,10 +1,12 @@
 # Upstream T3 Code base for Linguini (patch layout).
-# The pin lives in .linguini/upstream.pin (repo= and commit=). This repo does not contain
+# The pin lives in .linguini/upstream.pin (repo=, tag= for a release-tag pin, commit=). We track stable
+# upstream releases (vX.Y.Z tags; prereleases are skipped). This repo does not contain
 # upstream's files: .linguini/assemble builds the tree from the pin, .linguini/patches (one per
 # upstream file we change) and .linguini/deleted (upstream files we don't carry), plus our own
 # files. To sync:
-#   .linguini/bump            # try the patches on upstream main; reports clean / 3way / FAILED
-#   .linguini/bump main --write   # move the pin and regenerate the patches (needs no failures)
+#   .linguini/bump            # try the patches on the latest stable release tag; reports clean / 3way / FAILED
+#   .linguini/bump --write    # move the pin there and regenerate the patches (needs no failures)
+#   .linguini/bump v0.2.0 [--write] / .linguini/bump main   # a specific tag, or a branch for a trial
 #   then assemble, typecheck/test/build in .linguini/build, commit, open a PR.
 # A FAILED patch: fix the file in the tree bump printed, then `.linguini/regen <that tree>`.
 # Linguini does not carry upstream's GitHub automation. .github/workflows (except our

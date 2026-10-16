@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
-# .linguini/bump [REF] [--write] — try the patches on upstream REF (default: main). Reports each
+# .linguini/bump [REF] [--write] — try the patches on upstream REF: a release tag (v0.2.0), a
+# branch (main) or a commit. Default: the latest stable release tag (vX.Y.Z, no -suffix). Reports each
 # patch: clean, 3way (applied via 3-way merge), FAILED. With --write and no failures: moves the
 # pin, regenerates the patches against it, and refreshes pnpm-lock.yaml if its patch failed
 # (RELOCK=1 forces: pnpm install --lockfile-only in the assembled tree).
 source "$(dirname "$0")/lib.sh"
-REF=main WRITE=
+REF= WRITE=
 for a in "$@"; do case $a in --write) WRITE=1 ;; *) REF=$a ;; esac; done
+if [ -z "$REF" ]; then
+  REF=$(latest_release_tag)
+  [ -n "$REF" ] || { echo "bump: no stable release tag found upstream" >&2; exit 1; }
+  echo "bump: latest stable release tag is $REF" >&2
+fi
+TAG=
+# Only the one ref is fetched (shallow); a tag is fetched by its full ref name.
+if git ls-remote --exit-code --tags --refs "$UPSTREAM_URL" "refs/tags/$REF" >/dev/null 2>&1; then
+  TAG=$REF
+  fetch_ref=refs/tags/$REF
+else
+  fetch_ref=$REF
+fi
 [ -d "$CACHE" ] || git init -q --bare "$CACHE"
-git -C "$CACHE" fetch -q --depth 1 "$UPSTREAM_URL" "$REF"
-new=$(git -C "$CACHE" rev-parse FETCH_HEAD)
+git -C "$CACHE" fetch -q --depth 1 "$UPSTREAM_URL" "$fetch_ref"
+new=$(git -C "$CACHE" rev-parse 'FETCH_HEAD^{commit}')
 OUT=$(mktemp -d)/build
 REPORT=$(mktemp)
-echo "bump: $PIN -> $new" >&2
+echo "bump: ${PIN_TAG:-$PIN} -> ${TAG:+$TAG }$new" >&2
 KEEP_GOING=1 REPORT=$REPORT BASE=$PIN PIN_OVERRIDE=$new "$L/assemble" "$OUT" 2>/dev/null || true
 lock_failed=$(grep -c '^FAILED *pnpm-lock.yaml.patch' "$REPORT" || true)
 if [ "$lock_failed" != 0 ] || [ -n "${RELOCK:-}" ]; then
@@ -26,8 +40,8 @@ failed=$(grep -c '^FAILED' "$REPORT" || true)
 if [ -n "$WRITE" ]; then
   [ "$failed" = 0 ] || { echo "not writing: $failed patch(es) failed (fix in $OUT, then regen)" >&2; exit 1; }
   "$L/regen" "$OUT"
-  sed -i "s/^commit=.*/commit=$new/" "$L/upstream.pin"
-  echo "pin moved to $new" >&2
+  write_pin "$new" "$TAG"
+  echo "pin moved to ${TAG:+$TAG }$new" >&2
 fi
 echo "assembled tree: $OUT" >&2
 [ "$failed" = 0 ]

@@ -6,6 +6,17 @@ L=$ROOT/.linguini
 pin_get() { sed -n "s/^$1=//p" "$L/upstream.pin"; }
 UPSTREAM_URL=$(pin_get repo)
 PIN=$(pin_get commit)
+PIN_TAG=$(pin_get tag) # the release tag the pin came from (empty: a branch or commit pin)
+# write_pin COMMIT [TAG]: rewrite upstream.pin (tag= only for a release-tag pin).
+write_pin() {
+  { printf 'repo=%s\n' "$UPSTREAM_URL"; [ -z "${2:-}" ] || printf 'tag=%s\n' "$2"
+    printf 'commit=%s\n' "$1"; } >"$L/upstream.pin"
+}
+# Latest stable release tag upstream (vX.Y.Z only: prereleases carry a -suffix). One ls-remote, no fetch.
+latest_release_tag() {
+  git ls-remote --tags --refs "$UPSTREAM_URL" 'v*' | sed -n 's#.*refs/tags/##p' |
+    grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+}
 CACHE=${LINGUINI_UPSTREAM_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/linguini-upstream.git}
 export GIT_AUTHOR_NAME=linguini GIT_AUTHOR_EMAIL=linguini@localhost GIT_COMMITTER_NAME=linguini \
   GIT_COMMITTER_EMAIL=linguini@localhost GIT_AUTHOR_DATE=2000-01-01T00:00:00Z \

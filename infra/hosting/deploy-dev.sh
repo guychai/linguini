@@ -12,7 +12,7 @@
 #    their chunks. npm ci runs only if package*.json changed, and the backend restarts only if
 #    runtime files changed. /health and index.html are checked, and a failed check restores
 #    the backup.
-# 4. DEPLOYED_COMMIT records our commit, the upstream pin and the assembled tree id.
+# 4. DEPLOYED_COMMIT records our commit, the upstream pin (and its release tag) and the assembled tree id.
 # Service units and the env file are not installed. If they differ, it says so; install them
 # by hand (see README). DRY_RUN=1 stops after the checks on the node.
 set -euo pipefail
@@ -24,6 +24,7 @@ cd "$ROOT"
 [ -z "$(git status --porcelain)" ] || { echo "working tree not clean" >&2; exit 1; }
 commit=$(git rev-parse HEAD)
 pin=$(sed -n 's/^commit=//p' .linguini/upstream.pin)
+pin_tag=$(sed -n 's/^tag=//p' .linguini/upstream.pin)
 upstream=$(sed -n 's/^repo=//p' .linguini/upstream.pin)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -36,8 +37,10 @@ cp -a "$B/prototypes/runtime/src" "$B/prototypes/runtime/scripts" "$B/prototypes
   "$B/prototypes/runtime/package-lock.json" "$work/pkg/runtime/"
 cp -a "$B/infra/hosting" "$work/pkg/hosting"
 cp -a "$B/apps/owned-web/dist" "$work/pkg/web"
-printf 'repo=%s\ncommit=%s\nupstream=%s\nupstream_pin=%s\nassembled_tree=%s\n' \
-  "$(git remote get-url origin 2>/dev/null | sed 's/\.git$//')" "$commit" "$upstream" "$pin" "$tree" >"$work/pkg/DEPLOYED_COMMIT"
+{ printf 'repo=%s\ncommit=%s\nupstream=%s\n' \
+    "$(git remote get-url origin 2>/dev/null | sed 's/\.git$//')" "$commit" "$upstream"
+  [ -z "$pin_tag" ] || printf 'upstream_tag=%s\n' "$pin_tag"
+  printf 'upstream_pin=%s\nassembled_tree=%s\n' "$pin" "$tree"; } >"$work/pkg/DEPLOYED_COMMIT"
 tar -C "$work/pkg" -czf "$work/deploy.tgz" .
 sum=$(sha256sum "$work/deploy.tgz" | cut -d' ' -f1)
 "${SCP[@]}" "$work/deploy.tgz" "$ROOT/infra/hosting/deploy-node.sh" "$DEV_SSH:/tmp/"

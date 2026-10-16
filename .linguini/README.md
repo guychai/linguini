@@ -3,7 +3,7 @@
 This repo holds only Linguini's own code. Upstream T3 Code is not in the repo. It is pinned and
 patched:
 
-- `.linguini/upstream.pin`: upstream repo and commit.
+- `.linguini/upstream.pin`: upstream repo, the release tag we track (`tag=`, absent for a branch/commit pin) and its commit. We pin to stable upstream releases.
 - `.linguini/patches/<path with / as __>.patch`: one patch per upstream file we change
   (`git diff --full-index --binary`).
 - `.linguini/deleted`: upstream files we don't carry. It's a list, not patches, so upstream edits
@@ -22,8 +22,8 @@ cd .linguini/build && pnpm install && pnpm run typecheck   # build, test and edi
 .linguini/regen               # write edits back: upstream files -> patches/deleted, ours -> repo
 git add -A && git commit      # in this repo
 .linguini/status              # 0 in sync, 1 unsaved edits in the build tree, 2 build tree is stale
-.linguini/bump [REF]          # try the patches on upstream REF (default main); report per patch
-.linguini/bump REF --write    # ... and move the pin, regenerating patches against it
+.linguini/bump [REF]          # try the patches on upstream REF (tag, branch or commit; default: latest stable vX.Y.Z tag)
+.linguini/bump [REF] --write  # ... and move the pin (recording tag= for a tag), regenerating patches against it
 ```
 
 - **Don't lose work:** edits in `.linguini/build` live only there until you run `regen`, and
