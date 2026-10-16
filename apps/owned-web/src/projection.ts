@@ -247,6 +247,9 @@ export function projection(c: Conversation) {
     messages.push(message("user", job.text));
     items.push({
       ...base(),
+      // Upstream records a sent message as completed at once; the run carries the turn's state.
+      status: "completed",
+      completedAt: t.requestedAt ?? date,
       type: "user_message",
       createdBy: "user",
       creationSource: "web",
