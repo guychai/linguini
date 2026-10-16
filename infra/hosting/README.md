@@ -32,5 +32,5 @@ Placeholders: `<host-ip>` = the node's Tailscale IPv4 (`OWN_HOST` in `agent-plat
   - Backup: pg_dump, runtime src/scripts/package files, web and `DEPLOYED_COMMIT` go to `/opt/agent-platform/backup-<ts>-deploy`.
   - Install: runtime files are rsynced. `npm ci` runs only when package*.json changed, and the backend restarts only when runtime files changed. The web goes in as a new directory that keeps the old hashed assets, so open tabs keep working.
   - Checks: `/health` and the served index.html. A failed check restores the backup automatically.
-  - `DEPLOYED_COMMIT` gets `commit=` (ours), `upstream_pin=`, `assembled_tree=`, `deployed=` and `backend_restarted=`.
+  - `DEPLOYED_COMMIT` gets `commit=` (ours), `upstream_tag=` (when pinned to a release), `upstream_pin=`, `assembled_tree=`, `deployed=` and `backend_restarted=`.
   - Units and the env file are not installed; it says when they differ. `DRY_RUN=1` stops after the checks.

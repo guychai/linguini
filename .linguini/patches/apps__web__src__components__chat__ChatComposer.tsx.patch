@@ -1,5 +1,5 @@
 diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
-index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643abacd6dd803 100644
+index 822e79da8dbd7e9aa630f7fd1a370e0474686143..17b54de5107f92ddfacaceacff1c427f69c70a4a 100644
 --- a/apps/web/src/components/chat/ChatComposer.tsx
 +++ b/apps/web/src/components/chat/ChatComposer.tsx
 @@ -1,3 +1,4 @@
@@ -7,7 +7,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
  import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
  import { useComposerTypingGuard } from "./useComposerTypingGuard";
  import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
-@@ -273,7 +274,7 @@ import {
+@@ -275,7 +276,7 @@ import {
  } from "~/state/pullRequests";
  import { useEnvironmentQuery } from "~/state/query";
  import { useDebouncedValue } from "~/state/queries";
@@ -16,7 +16,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
  import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
  import {
    type ComposerCommandItem,
-@@ -1284,7 +1285,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
+@@ -1286,7 +1287,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
  
    const interactionModeToggle = props.showInteractionModeToggle ? (
      <>
@@ -25,7 +25,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
        <Tooltip>
          <TooltipTrigger
            render={
-@@ -1322,9 +1323,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
+@@ -1324,9 +1325,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
  
    return (
      <>
@@ -37,7 +37,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
          <Select
            open={open}
            onOpenChange={setOpen}
-@@ -1370,7 +1371,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
+@@ -1372,7 +1373,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
            </SelectPopup>
          </Select>
          <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
@@ -46,7 +46,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
  
        {interactionModeToggle}
      </>
-@@ -3047,7 +3048,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -3049,7 +3050,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
      planModeEnabled: settings.planModeEnabled,
      isComposerOwned: true,
    } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
@@ -55,7 +55,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
    const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
      null,
    );
-@@ -5117,8 +5118,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -5119,8 +5120,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
      setIsComposerModelPickerOpen(false);
    }
    useLayoutEffect(() => {
@@ -74,7 +74,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
    useLayoutEffect(() => {
      onRestingChange(isComposerResting);
    }, [isComposerResting, onRestingChange]);
-@@ -5331,7 +5340,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -5333,7 +5342,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    const iconOnlyBlockCount = composerControlsCollapsed
      ? restingControlsIconOnlyBlockCount
      : expandedControlsLayout.iconOnlyBlockCount;
@@ -83,7 +83,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
      ...providerTraitsPickerInput,
      size: composerControlsCollapsed ? "xs" : "sm",
      hidden: composerControlsHidden || restingHiddenBlockCount > 1,
-@@ -5365,7 +5374,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -5367,7 +5376,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
          />
        ),
      },
@@ -92,7 +92,7 @@ index 5f775123d49e768a1cecd2d8bd3b35c5f6ad5f0a..2cf72b6473d6fd23b8c082ce8c643aba
    const hiddenRestingBlockIds = restingBlockDefs
      .slice(restingBlockDefs.length - restingHiddenBlockCount)
      .map((def) => def.id);
-@@ -5389,7 +5398,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -5391,7 +5400,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
        {composerControlsCollapsed &&
        restingControlsHost !== null &&
        restingControlsHaveLeadingContext ? (

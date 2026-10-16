@@ -1,5 +1,5 @@
 diff --git a/apps/web/src/branding.ts b/apps/web/src/branding.ts
-index 7fc57cf0d03fea12b1dbb1c8838fcfe790ba65bf..d7a7b45951248dcf4a62fec45faa1b3f81d02812 100644
+index 528609d36e608c9e2bb21493af1011bf651103c0..0e269f4bda75cf01a83620d71fd91e6014114450 100644
 --- a/apps/web/src/branding.ts
 +++ b/apps/web/src/branding.ts
 @@ -1,5 +1,6 @@
@@ -18,7 +18,7 @@ index 7fc57cf0d03fea12b1dbb1c8838fcfe790ba65bf..d7a7b45951248dcf4a62fec45faa1b3f
  export const APP_STAGE_LABEL =
    injectedDesktopAppBranding?.stageLabel ??
    HOSTED_APP_CHANNEL_LABEL ??
-   (import.meta.env.DEV ? "Dev" : "Alpha");
+   (import.meta.env.DEV ? "Dev" : "Beta");
  export const APP_DISPLAY_NAME =
 +  uiFlags.appName ??
    injectedDesktopAppBranding?.displayName ??
