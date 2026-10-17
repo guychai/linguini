@@ -47,6 +47,7 @@ git add -A && git commit      # in this repo
   (e.g. `.github/workflows`, `.github/scripts`) and add it to `deleted` (see UPSTREAM).
   `pnpm-workspace.yaml` is unpatched (upstream's `apps/*` already includes apps/owned-web).
   prototypes/runtime is npm with its own lock, so it's ours as-is.
+- **Browser regression suite:** `.linguini/e2e` runs `e2e/` (Playwright) against a live deployment; see e2e/README.md.
 - **Deploy:** `infra/hosting/deploy-dev.sh` (see infra/hosting/README.md) assembles in a temp dir
   and records our commit plus the upstream pin in the node's `DEPLOYED_COMMIT`.
 - Keep patches small: put logic in our own files (e.g. `apps/web/src/uiFlags.ts`,
