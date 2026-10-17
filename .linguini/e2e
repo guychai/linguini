@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Runs the browser regression suite (e2e/) against a live deployment. See e2e/README.md.
+#   BASE_URL=https://<node> [E2E_CLEANUP_CMD=...] .linguini/e2e [playwright args]
+set -euo pipefail
+cd "$(dirname "$0")/../e2e"
+: "${BASE_URL:?set BASE_URL to the deployment}"
+[ -d node_modules/@playwright/test ] || npm ci --no-audit --no-fund
+exec npx playwright test "$@"
