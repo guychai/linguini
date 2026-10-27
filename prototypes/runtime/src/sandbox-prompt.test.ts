@@ -28,6 +28,16 @@ test("system prompt states the sandbox facts and lists the allowed hosts from th
     p.includes("github.com: GET/HEAD; POST /*/*/git-upload-pack, /*/*.git/git-upload-pack"),
   );
   assert.ok(p.includes("registry.npmjs.org: GET/HEAD"));
+  // Git: what works (public clone, private via the App), what does not (push, PRs), no tokens.
+  for (const fact of [
+    "Clone, fetch, pull and ls-remote work for public repositories",
+    "Linguini GitHub App",
+    "git-push-not-enabled",
+    "never ask the user for a personal access token",
+    "rewritten to HTTPS",
+  ])
+    assert.ok(p.includes(fact), fact);
+  assert.ok(!/git worktrees/.test(p));
   assert.ok(!/host-control|\/var\/lib\/agentplat/.test(p));
   assert.match(sandboxSystemPrompt([]), /no outbound network access/);
   assert.equal(describeEgress([{ host: "a.example", methods: ["GET"] }]), "  - a.example: GET");

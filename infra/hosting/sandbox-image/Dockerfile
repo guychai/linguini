@@ -11,6 +11,15 @@ RUN apk add --no-cache \
       tar gzip xz unzip make tzdata libstdc++ libgcc \
  && sed -i 's#^root:\(.*\):/bin/[a-z]*$#root:\1:/bin/bash#' /etc/passwd
 
+# Git over HTTPS only (the sandbox has no route to port 22): GitHub SSH remotes are rewritten to
+# HTTPS, where the egress proxy adds GitHub App credentials for private repositories
+# (infra/sandbox-kit/egress/addon/github_app.py). No credential helper and no password prompts:
+# the sandbox never holds GitHub credentials, so a prompt could only hang.
+RUN git config --system url."https://github.com/".insteadOf "git@github.com:" \
+ && git config --system --add url."https://github.com/".insteadOf "ssh://git@github.com/" \
+ && git config --system --add url."https://github.com/".insteadOf "git://github.com/"
+ENV GIT_TERMINAL_PROMPT=0
+
 # mise: pinned release, checksum-verified (musl build for Alpine).
 ARG MISE_VERSION=v2026.10.8
 ARG MISE_SHA256=043dc6b9077db988269ca2f85059851cb09fc080355350021363e95a5e227f84

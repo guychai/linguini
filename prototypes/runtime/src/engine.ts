@@ -222,7 +222,13 @@ export class Engine {
         // outcome also blocks it, since the workspace state is uncertain.
         assertNotBlocked(c);
         assertPublicationAllowed(c);
-        throw new ApiError(501, "PR and publication integrations are disabled");
+        // Not implemented: no PR or publish integration exists yet. Pull requests are planned as a
+        // host-side GitHub App tool (git-via-egress phase 2); this stub keeps the taint checks above.
+        throw new ApiError(
+          501,
+          "Not implemented: pull requests and publishing are not available yet",
+          "not_implemented",
+        );
       }
       let jobId: string | null = null;
       if (command.kind.startsWith("queue_")) {

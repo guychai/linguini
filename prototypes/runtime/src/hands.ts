@@ -349,6 +349,8 @@ export interface EgressRegistration {
   writer: EgressPolicyWriter;
   /** Trusted server-side allowlist per conversation (config, never agent input). */
   rules: (owner: string, conversationId: string) => EgressRule[];
+  /** GitHub App access through the proxy (github.ts); absent: anonymous GitHub only. */
+  github?: (owner: string, conversationId: string) => EgressGitHub | undefined;
   /** The node egress CA certificate (public), installed as the sandbox's trust anchor. */
   caPem: string;
 }
@@ -696,6 +698,7 @@ export class NomadKataHands implements HandsProvider {
           workspaceId: binding.workspaceId,
           tainted: c.tainted === true,
           rules: sandbox.egress.rules(owner, id),
+          ...githubField(sandbox.egress.github?.(owner, id)),
         });
       } catch (error) {
         throw new ApiError(
@@ -966,13 +969,25 @@ export interface EgressRule {
   /** Keep this host reachable after production-data taint (default: no). */
   allowWhenTainted?: boolean;
 }
+/**
+ * GitHub through the egress proxy (infra/sandbox-kit/egress/addon/github_app.py). The proxy always
+ * drops the guest's own GitHub credentials and refuses git push; with `app`, reads of a repository
+ * the node's GitHub App is installed on get a token the proxy mints for that one repository.
+ */
+export interface EgressGitHub {
+  app: boolean;
+}
 export interface EgressPolicy {
   version: 1;
   conversationKey: string;
   workspaceId: string;
   tainted: boolean;
   rules: EgressRule[];
+  /** Optional (older proxies ignore it): set by trusted server config per owner, never by agents. */
+  github?: EgressGitHub;
 }
+/** The policy's `github` field, only when set (policies without it stay byte-identical). */
+export const githubField = (github: EgressGitHub | undefined) => (github ? { github } : {});
 export interface EgressPolicyWriter {
   apply(policy: EgressPolicy): Promise<void>;
 }
@@ -1108,6 +1123,8 @@ export class HandsSandbox implements SandboxProvider {
       /** Trusted server-side allowlist per conversation (config, never agent input). Use the same
        * function as NomadKataHands' `sandbox.egress.rules`. */
       egressRules?: (owner: string, conversationId: string) => EgressRule[];
+      /** Same function as NomadKataHands' `sandbox.egress.github`. */
+      egressGitHub?: (owner: string, conversationId: string) => EgressGitHub | undefined;
       deadlineMs?: number;
       outputLimitBytes?: number;
       /**
@@ -1147,6 +1164,7 @@ export class HandsSandbox implements SandboxProvider {
         workspaceId: binding.workspaceId,
         tainted,
         rules: this.options.egressRules?.(owner, conversationId) ?? [],
+        ...githubField(this.options.egressGitHub?.(owner, conversationId)),
       });
     return { allocId: binding.allocId, generation: binding.generation };
   }
@@ -1171,6 +1189,7 @@ export class HandsSandbox implements SandboxProvider {
         workspaceId: binding.workspaceId,
         tainted: options.tainted === true,
         rules: this.options.egressRules?.(owner, conversationId) ?? [],
+        ...githubField(this.options.egressGitHub?.(owner, conversationId)),
       });
     const run = (argv: string[], stdin?: string) =>
       this.hands.exec(owner, conversationId, {
