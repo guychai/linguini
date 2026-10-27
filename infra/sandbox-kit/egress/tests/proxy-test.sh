@@ -72,10 +72,13 @@ check connect-to-fronting "$out" "403"
 check redirect-to-denied "$(code -L "https://api.test:$U/redirect?to=https://denied.test:$U/echo")" "403"
 out=$(c -L "https://api.test:$U/redirect?to=https://cdn.test:$U/echo")
 check redirect-no-credential-carryover "$(echo "$out" | jq -r .auth_sha256)" "null"
-# websockets: allowed with opt-in (api.test), refused without (cdn.test)
-out=$(curl -sS --max-time 5 --proxy "http://127.0.0.1:$PP" --cacert "$CA" "wss://api.test:$U/ws" 2>&1 || true)
-check websocket-allowed "$(grep -o hello-ws <<<"$out" | head -1)" "hello-ws"
-check websocket-not-opted-in "$(code "wss://cdn.test:$U/ws")" "403"
+# websockets: allowed with opt-in (api.test), refused without (cdn.test). Needs a curl built with
+# ws/wss (Ubuntu 24.04's curl 8.5 has none): reported as SKIP there, not as a pass.
+if curl -V | grep -qiE '^Protocols:.* wss( |$)'; then
+  out=$(curl -sS --max-time 5 --proxy "http://127.0.0.1:$PP" --cacert "$CA" "wss://api.test:$U/ws" 2>&1 || true)
+  check websocket-allowed "$(grep -o hello-ws <<<"$out" | head -1)" "hello-ws"
+  check websocket-not-opted-in "$(code "wss://cdn.test:$U/ws")" "403"
+else echo "SKIP websocket-allowed, websocket-not-opted-in: this curl has no wss support"; fi
 # non-HTTP inside an allowed CONNECT: killed before the upstream answers
 out=$("$venv/bin/python" "$here/harness.py" tcp-probe 127.0.0.1 "$PP" api.test "$T")
 case "$out" in *"200"*"<closed>"*|*"200"*"Error>"*) pass non-http-killed "$out";; *) fail non-http-killed "$out";; esac

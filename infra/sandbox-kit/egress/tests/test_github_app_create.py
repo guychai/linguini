@@ -50,7 +50,8 @@ class Conversions(BaseHTTPRequestHandler):
 
 class CreateTests(unittest.TestCase):
     def test_manifest_is_private_read_only(self):
-        m = json.load(open(MANIFEST))
+        with open(MANIFEST) as f:
+            m = json.load(f)
         self.assertIs(m["public"], False)
         self.assertEqual(m["default_permissions"], {"contents": "read", "metadata": "read"})
         self.assertFalse(m["hook_attributes"]["active"])
@@ -85,7 +86,8 @@ class CreateTests(unittest.TestCase):
             api.shutdown()
         self.assertEqual(proc.returncode, 0, stdout)
         self.assertEqual(Conversions.seen, ["/app-manifests/abc/conversions"])
-        self.assertEqual(open(out).read(), PEM)
+        with open(out) as f:
+            self.assertEqual(f.read(), PEM)
         self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600)
         self.assertIn('"app_id": 777', stdout)
         for secret in ("TESTKEYNOTREAL", "cs-SECRET", "wh-SECRET"):
