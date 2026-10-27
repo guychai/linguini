@@ -66,7 +66,12 @@ export function gateway(broker: SandboxBroker, key: string) {
           assertNotBlocked(c);
           assertPublicationAllowed(c);
         });
-        throw new ApiError(501, "PR and publication integrations are disabled in this prototype");
+        // Not implemented (see engine.ts): only the taint checks above are real.
+        throw new ApiError(
+          501,
+          "Not implemented: pull requests and publishing are not available yet",
+          "not_implemented",
+        );
       }
       throw new ApiError(404, "Unsupported route");
     } catch (error) {

@@ -10,10 +10,15 @@ Default deny everywhere: unknown source, no policy, host not allowlisted, raw IP
 plain HTTP, websocket without opt-in, non-HTTP payloads, blocked upstream addresses
 (metadata and link-local always). The audit log carries decisions and sizes, never
 headers, bodies, query strings or secret values.
+
+GitHub (github_app.py): the guest's own credentials never reach GitHub; git push is refused;
+reads of one repository get a token minted for that repository only, when the node has a
+GitHub App configured and the conversation's policy enables it (`github.app`).
 """
 
 
 import asyncio
+import collections
 import ipaddress
 import re
 import json
@@ -26,6 +31,9 @@ from mitmproxy import ctx, dns, http, tcp
 from mitmproxy.net.dns import response_codes
 from mitmproxy.proxy import server_hooks
 from mitmproxy.tls import ClientHelloData
+
+# Sibling module (mitmproxy puts this script's directory on sys.path while loading it).
+import github_app as gh
 
 # Never reachable, whatever the node config says: cloud metadata and link-local.
 ALWAYS_BLOCKED = [
@@ -41,6 +49,10 @@ ALWAYS_BLOCKED = [
         "255.255.255.255/32",
     )
 ]
+# Default GitHub App lookups (installation + mint) one conversation may cause per window: a hostile
+# guest naming endless repositories must not use up the App's API rate limit for everyone.
+# Node config: github_app.conversation_budget = {"calls": 100, "window_s": 600}.
+GITHUB_API_BUDGET = {"calls": 100, "window_s": 600}
 # How long a DNS answer we gave a sandbox stays a valid transparent destination for that name.
 RESOLVED_TTL = 3600.0
 # Blocked unless the node config lists them in allow_private_upstreams.
@@ -85,6 +97,7 @@ class Decision:
     reason: str
     key: str | None = None
     rule: dict | None = None
+    policy: dict | None = None
 
 
 def _glob_re(pattern: str) -> re.Pattern:
@@ -129,6 +142,9 @@ class SandboxEgress:
     def __init__(self) -> None:
         self.cfg: dict = {}
         self.secrets: dict = {}
+        self.github: gh.GitHubApp | None = None
+        self._github_calls: dict[str, collections.deque] = {}
+        self.github_budget = dict(GITHUB_API_BUDGET)
         self._audit_lock = threading.Lock()
         self._tunnels: dict[str, Tunnel] = {}
         # (sandbox source IP, name) -> {address: expiry}: what our DNS told that sandbox. In
@@ -157,6 +173,9 @@ class SandboxEgress:
         for name, s in self.secrets.items():
             if not s.get("header") or not s.get("value_file") or not s.get("hosts"):
                 raise ValueError(f"egress secret {name}: header, value_file and hosts are required")
+        # Optional: the Linguini GitHub App (private key file root:sandbox-egress 0640).
+        self.github = gh.GitHubApp(self.cfg["github_app"]) if self.cfg.get("github_app") else None
+        self.github_budget = {**GITHUB_API_BUDGET, **(self.cfg.get("github_app") or {}).get("conversation_budget", {})}
 
     # ---- identity and policy ----
     def _key_for(self, source: str) -> str | None:
@@ -216,7 +235,7 @@ class SandboxEgress:
                     # More specific than a method miss on another rule for this host.
                     first_miss = Decision(False, "path-not-allowed", key, rule)
                     continue
-            return Decision(True, "rule", key, rule)
+            return Decision(True, "rule", key, rule, policy)
         if first_miss:
             return first_miss
         return Decision(False, "raw-ip" if literal else "host-not-allowed", key)
@@ -233,9 +252,11 @@ class SandboxEgress:
                 os.close(fd)
 
     @staticmethod
-    def _deny(flow: http.HTTPFlow, status: int, reason: str):
+    def _deny(flow: http.HTTPFlow, status: int, reason: str, detail: str | None = None):
+        # text/plain: git shows the body of a failed smart-HTTP request as "remote: …" lines.
+        body = f"egress denied: {reason}" + (f": {detail}" if detail else "") + "\n"
         flow.response = http.Response.make(
-            status, f"egress denied: {reason}\n".encode(), {"content-type": "text/plain", "x-egress-denied": reason}
+            status, body.encode(), {"content-type": "text/plain; charset=utf-8", "x-egress-denied": reason}
         )
 
     # ---- HTTP CONNECT (explicit proxy) ----
@@ -304,7 +325,7 @@ class SandboxEgress:
             data.context.client.error = "egress: SNI does not match the CONNECT host"
 
     # ---- every HTTP request (in a tunnel or absolute-form) ----
-    def requestheaders(self, flow: http.HTTPFlow):
+    async def requestheaders(self, flow: http.HTTPFlow):
         if flow.request.method == "CONNECT":
             return
         src = _source(flow.client_conn.peername)
@@ -329,12 +350,46 @@ class SandboxEgress:
         is_ws = flow.request.headers.get("upgrade", "").lower() == "websocket"
         if reason is None and is_ws and not (d.rule or {}).get("websocket"):
             reason = "websocket-not-allowed"
+        repo = gh.parse_repo_request(host, flow.request.method, flow.request.path) if host in gh.GITHUB_HOSTS else None
+        detail = None
+        if reason is None and repo and repo.kind == "git-write":
+            # Phase 1: no push, whatever the rules say (receive-pack discovery and data alike).
+            reason, detail = "git-push-not-enabled", gh.denial_message(repo, "push", False)
         if reason:
-            self.audit(**base, sandbox=d.key, decision="deny", reason=reason)
-            return self._deny(flow, 403, reason)
+            self.audit(**base, sandbox=d.key, decision="deny", reason=reason,
+                       repo=repo.full_name if repo else None, git_service=repo.service if repo else None)
+            return self._deny(flow, 403, reason, detail)
         injected = self._inject(flow, host, d.rule or {})
+        github = None
+        if host in gh.GITHUB_HOSTS and not injected:
+            github = await self._github_auth(flow, host, repo, d.policy or {})
         flow.metadata["egress"] = {**base, "sandbox": d.key, "injected": injected, "websocket": is_ws or None,
-                                   "started": time.monotonic()}
+                                   "started": time.monotonic(), **(github or {})}
+
+    async def _github_auth(self, flow: http.HTTPFlow, host: str, repo, policy: dict) -> dict:
+        """Strip the guest's credentials; add a token for this one repository when allowed."""
+        for h in gh.GUEST_AUTH_HEADERS:
+            flow.request.headers.pop(h, None)
+        if repo is None:
+            return {"github": "anonymous"}
+        app_enabled = bool(self.github and (policy.get("github") or {}).get("app") is True
+                           and not policy.get("tainted"))
+        out = {"repo": repo.full_name, "git_service": repo.service, "github_kind": repo.kind,
+               "github": "anonymous", "github_app_enabled": app_enabled}
+        if not app_enabled or flow.request.scheme != "https" or not gh.credential_allowed(
+                repo, flow.request.method, flow.request.path):
+            out["github_reason"] = "app-disabled" if not app_enabled else "not-credentialed"
+            return out
+        if self.github.needs_api(repo.full_name) and not self._github_budget(policy.get("conversationKey", "")):
+            out["github_reason"] = "rate-limited"
+            return out
+        res = await self.github.token_for(repo.owner, repo.repo)
+        out["github_reason"] = res.reason
+        if res.token:
+            flow.request.headers["authorization"] = gh.auth_header_value(host, res.token)
+            out["github"] = "app"
+            out["github_cached"] = res.cached
+        return out
 
     def _inject(self, flow: http.HTTPFlow, host: str, rule: dict) -> str | None:
         name = rule.get("inject")
@@ -356,6 +411,8 @@ class SandboxEgress:
         if not meta:
             return
         started = meta.pop("started", None)
+        if meta.get("repo"):
+            self._github_response(flow, meta)
         location = None
         if 300 <= flow.response.status_code < 400 and "location" in flow.response.headers:
             loc = flow.response.headers["location"]
@@ -363,6 +420,45 @@ class SandboxEgress:
         self.audit(**meta, decision="allow", status=flow.response.status_code,
                    bytes_out=len(flow.request.raw_content or b""), bytes_in=len(flow.response.raw_content or b""),
                    redirect=location, ms=int((time.monotonic() - started) * 1000) if started else None)
+
+    def _github_budget(self, key: str) -> bool:
+        limit, window = int(self.github_budget["calls"]), float(self.github_budget["window_s"])
+        now = time.monotonic()
+        q = self._github_calls.setdefault(key, collections.deque())
+        while q and q[0] < now - window:
+            q.popleft()
+        if len(q) >= limit:
+            return False
+        q.append(now)
+        if len(self._github_calls) > 10_000:
+            self._github_calls = {k: v for k, v in self._github_calls.items() if v and v[-1] >= now - window}
+        return True
+
+    def _github_response(self, flow: http.HTTPFlow, meta: dict):
+        """Readable failures for git, and no download tokens back into the sandbox."""
+        status = flow.response.status_code
+        host = meta.get("host")
+        if meta.get("github") == "app":
+            if status == 401:  # revoked or expired early: mint again next time
+                self.github.forget(meta["repo"])
+            # Private content links (download_url, archive redirects) carry ?token=…: drop it.
+            loc = flow.response.headers.get("location")
+            if loc and "token=" in loc:
+                flow.response.headers["location"] = gh.scrub_download_tokens(loc.encode())[0].decode()
+            ctype = flow.response.headers.get("content-type", "")
+            if host == gh.GITHUB_API and "json" in ctype and b"token=" in (flow.response.content or b""):
+                flow.response.content = gh.scrub_download_tokens(flow.response.content)[0]
+        if host == gh.GITHUB_WEB and meta.get("github_kind") == "git-read" and status in (401, 403, 404):
+            # 401 would make git prompt for a password; the sandbox never has one to give.
+            reason = meta.get("github_reason", "")
+            if meta.get("github") == "app":
+                reason = "refused"
+            msg = gh.denial_message(gh.RepoRequest(*meta["repo"].split("/", 1), "git-read"), reason,
+                                    bool(meta.get("github_app_enabled")))
+            flow.response = http.Response.make(
+                403 if status == 401 else status, f"egress: {msg}\n".encode(),
+                {"content-type": "text/plain; charset=utf-8", "x-egress-github": reason or "anonymous"})
+            meta["github_rewritten"] = status
 
     def websocket_end(self, flow: http.HTTPFlow):
         meta = flow.metadata.get("egress") or {}

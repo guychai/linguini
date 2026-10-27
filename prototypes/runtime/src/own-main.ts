@@ -15,6 +15,7 @@ import {
 } from "./hands.ts";
 import { FixtureHarness, PiHarness } from "./harness.ts";
 import { sandboxSystemPrompt } from "./sandbox-prompt.ts";
+import { githubAppAccessFromEnv } from "./github.ts";
 import { Engine } from "./engine.ts";
 import { IdleReaper, StopOnIdle, parseDuration } from "./idle.ts";
 import { api, type TokenBindings } from "./api.ts";
@@ -83,6 +84,9 @@ const defaultEgressRules: EgressRule[] = process.env.EGRESS_DEFAULT_RULES_FILE
   ? JSON.parse(await readFile(process.env.EGRESS_DEFAULT_RULES_FILE, "utf8"))
   : [];
 const rulesFor = (owner: string) => [...defaultEgressRules, ...(egressRules[owner] ?? [])];
+// GitHub App reads through the proxy (repo-scoped tokens minted on the node), for the owners in
+// GITHUB_APP_OWNERS only. The App itself is node config (/etc/sandbox-egress/config.json).
+const githubFor = githubAppAccessFromEnv(process.env);
 const sandboxNetwork =
   egressWriter && process.env.EGRESS_CA_FILE
     ? new CommandNetworkProvisioner(
@@ -97,6 +101,7 @@ const sandboxPlacement =
         egress: {
           writer: egressWriter,
           rules: rulesFor,
+          github: githubFor,
           caPem: await readFile(process.env.EGRESS_CA_FILE, "utf8"),
         },
       }
@@ -221,7 +226,9 @@ const provider =
           // The egress proxy is the boundary only when the server writes its policy files.
           // Rules come from trusted server config (owner -> rules), never from requests.
           {
-            ...(egressWriter ? { egress: egressWriter, egressRules: rulesFor } : {}),
+            ...(egressWriter
+              ? { egress: egressWriter, egressRules: rulesFor, egressGitHub: githubFor }
+              : {}),
             ...(previewTools ? { previewTools } : {}),
             visualTools: (o: string, i: string, call) => {
               if (!visual)

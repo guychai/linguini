@@ -21,13 +21,13 @@ bash tests/linux-preflight-stub-test.sh >/dev/null && ok linux-preflight-stub-te
 # Files the node scripts read must be in the kit archive (git archive of the committed tree), not
 # just in this working copy: the repo's root .gitignore once hid inner/build/ (step 40, dev VM).
 if git -C . rev-parse --git-dir >/dev/null 2>&1; then
-  for f in inner/build/Dockerfile inner/build/compose.yaml inner/dind-entry.sh egress/node/sandbox-netctl egress/requirements.lock nomad/hands.nomad.hcl; do
+  for f in inner/build/Dockerfile inner/build/compose.yaml inner/dind-entry.sh egress/node/sandbox-netctl egress/requirements.lock egress/addon/github_app.py nomad/hands.nomad.hcl; do
     [ -n "$(git ls-files -- "$f")" ] && ok "tracked: $f" || no "$f is not tracked by git, so it is missing from the kit archive"
   done
   untracked=$(git ls-files --others --ignored --exclude-standard -- . | grep -vE '(^|/)__pycache__/|\.pyc$' || true)
   [ -z "$untracked" ] && ok "no ignored files inside the kit" || no "ignored (not archived) files in the kit: $(echo "$untracked" | tr '\n' ' ')"
 fi
-python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' egress/addon/sandbox_egress.py egress/tests/harness.py && ok "python syntax (egress)" || no "python syntax (egress)"
+python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' egress/addon/sandbox_egress.py egress/addon/github_app.py egress/github-app-create.py egress/tests/harness.py egress/tests/test_github_app.py egress/tests/test_github_app_create.py && ok "python syntax (egress)" || no "python syntax (egress)"
 for f in egress/*.json; do jq -e . "$f" >/dev/null && ok "json $f" || no "json $f"; done
 # Every pin the scripts need exists for both arches.
 ( . ./versions.env; for a in amd64 arm64; do v="KIT_KATA_SHA256_$a"; w="KIT_NOMAD_SHA256_$a"; [[ "${!v}" =~ ^[0-9a-f]{64}$ && "${!w}" =~ ^[0-9a-f]{64}$ ]] || exit 1; done ) && ok "per-arch sha256 pins (amd64, arm64)" || no "per-arch sha256 pins"

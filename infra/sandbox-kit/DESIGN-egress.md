@@ -106,6 +106,7 @@ needs one proxy instance (confdir) per sandbox, or Envoy with SDS; that is defer
 | `run-proxy.sh`                                | `mitmdump` with the addon, transparent proxy plus DNS mode (explicit mode for tests only), lazy connect, no flow bodies on disk                                                     |
 | `node/sandbox-net.sh`                         | `init` / `add IFACE IP KEY` / `del` / `status` / `down` for the nftables table and the source map                                                 |
 | `config.example.json`, `secrets.example.json` | node config and the secret format `{name: {header, format, value_file, hosts}}`                                                                   |
+| `addon/github_app.py`, `GITHUB.md`, `github-app-manifest.json`, `github-app-create.py` | GitHub: repo-scoped App tokens minted by the proxy, push refused; App manifest and setup |
 | `requirements.in`, `requirements.lock`        | mitmproxy 12.2.3, hash-locked                                                                                                                     |
 | `tests/harness.py`                            | test CA plus upstream (HTTPS echo returning `sha256(Authorization)`, never the value; redirect; websocket; raw TCP), policies, DNS and TCP probes |
 | `tests/proxy-test.sh`                         | 35 checks over loopback, no root                                                                                                                  |
@@ -239,6 +240,26 @@ against the test proxy and checks:
 - there is no IPv6;
 - the token file is absent in the guest, and its value is not in the env, `/local`, `/secrets`
   or any response.
+
+## GitHub
+
+GitHub is special-cased in the addon (`egress/addon/github_app.py`, details and setup in
+`egress/GITHUB.md`):
+
+- the guest's `Authorization`/`Cookie` headers never reach a GitHub host;
+- git push (`git-receive-pack`, including its `info/refs` discovery) is always refused with
+  403 `git-push-not-enabled`;
+- for owners the backend enables (policy field `github: {app: true}`, from
+  `GITHUB_APP_OWNERS`), reads of one repository (smart-HTTP upload-pack,
+  `api.github.com/repos/<o>/<r>/…` GET, raw.githubusercontent.com) get an installation token the
+  proxy mints for exactly that repository (`repositories: [repo]`, contents/metadata read) with
+  the node's GitHub App key, cached per repository until shortly before it expires;
+- download tokens GitHub embeds in API responses (`?token=`) are redacted; archive endpoints are
+  never credentialed;
+- anything else stays anonymous, so public repositories work without the App, and a private
+  repository the App cannot read fails with a `text/plain` explanation git prints as `remote:`.
+
+`tests/github-test.sh` proves it end to end against a mock GitHub (real git, real proxy).
 
 ## Gaps and next steps
 
