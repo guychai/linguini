@@ -24,6 +24,7 @@ import {
 import { CLICK_THROUGH_PATH, serveClickThrough } from "./out.ts";
 import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
+import type { Entitlements } from "./entitlements.ts";
 import {
   effectiveModel,
   validateSettings,
@@ -78,6 +79,8 @@ export function api(
       /** Called for every authenticated user (e.g. so recovery loops know the owner). */
       onUser?: (user: SessionUser) => void;
     };
+    /** Entitlements (entitlements.ts; on with AUTH_MODE=better-auth); absent: their routes 404. */
+    entitlements?: Entitlements;
     /** Conversation deletion (deletion.ts); absent: DELETE is a 501. */
     deleter?: Pick<ConversationDeleter, "tombstone" | "finish">;
     terminals?: TerminalManager;
@@ -362,6 +365,22 @@ export function api(
           user: u ? { id: u.id, email: u.email, name: u.name, admin: u.role === ADMIN_ROLE } : null,
         });
         return;
+      }
+      if (options.entitlements) {
+        const ent = options.entitlements;
+        if (url.pathname === "/api/me/entitlements" && request.method === "GET") {
+          json(200, ent.mine(owner, ["trino_query", "github_create_pr"]));
+          return;
+        }
+        if (url.pathname === "/api/admin/entitlements") {
+          if (auth.user?.role !== ADMIN_ROLE) throw new ApiError(404, "Not found");
+          if (request.method === "GET") return void json(200, { rules: ent.adminRules() });
+          if (request.method === "PUT")
+            return void json(200, {
+              rules: await ent.replace("admin", (await body(request)).rules, owner),
+            });
+          throw new ApiError(405, "Method not allowed");
+        }
       }
       if (url.pathname.startsWith("/api/admin/")) {
         // Not an admin (or no admin API): the routes do not exist.

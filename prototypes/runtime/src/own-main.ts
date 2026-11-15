@@ -1,4 +1,6 @@
+import { HostToolRegistry, previewHostTools, visualHostTools } from "./host-tools.ts";
 import { EgressLog } from "./egress-log.ts";
+import { FakeTrino, trinoHostTool, trinoHostsFromEnv } from "./trino.ts";
 import { readFile } from "node:fs/promises";
 import { validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
 import { resolve } from "node:path";
@@ -37,6 +39,7 @@ import {
 import { append } from "./store.ts";
 import { ConversationDeleter } from "./deletion.ts";
 import { AccountAdmin } from "./accounts.ts";
+import { Entitlements, PostgresRules } from "./entitlements.ts";
 import { sandboxQuota, type HandsBinding } from "./hands.ts";
 import { PostgresSettings, effectiveModel, settingsPolicyFromEnv } from "./users.ts";
 import { authConfigFromEnv, createAuth } from "./auth.ts";
@@ -64,6 +67,25 @@ const authPool = authMode
 const auth = authPool ? await createAuth(authConfigFromEnv(process.env, authPool)) : undefined;
 const users = authPool ? await PostgresSettings.open(authPool) : undefined;
 const settingsPolicy = settingsPolicyFromEnv();
+// Entitlements: on whenever AUTH_MODE=better-auth unless ENTITLEMENTS=0. Then trino_query,
+// github_create_pr, MCP and GitHub reads need an allow (admin API or ENTITLEMENTS_SEED_FILE,
+// applied only while no admin rules exist).
+let entitlements: Entitlements | undefined;
+if (authPool && process.env.ENTITLEMENTS !== "0") {
+  entitlements = await new Entitlements(await PostgresRules.open(authPool), async () =>
+    (await authPool.query(`SELECT id, role FROM "user" WHERE role IS NOT NULL`)).rows.map(
+      (r) => [r.id as string, r.role as string] as [string, string],
+    ),
+  ).load();
+  if (
+    process.env.ENTITLEMENTS_SEED_FILE &&
+    (await entitlements.seedIfEmpty(
+      JSON.parse(await readFile(process.env.ENTITLEMENTS_SEED_FILE, "utf8")),
+    ))
+  )
+    console.log(`entitlements: seeded ${entitlements.adminRules().length} admin rules`);
+  entitlements.start();
+}
 // Preview grants (preview.ts) are signed with a key derived from the auth secret.
 const previewGrantKey = auth
   ? createHmac("sha256", process.env.BETTER_AUTH_SECRET!).update("linguini-preview-grant").digest()
@@ -73,7 +95,9 @@ const previewGrantKey = auth
 const egressDenyHosts = (process.env.EGRESS_DENY_HOSTS ?? "")
   .split(",")
   .map((h) => h.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  // The warehouse (TRINO_URL's host) is denied even when EGRESS_DENY_HOSTS omits it.
+  .concat(trinoHostsFromEnv(process.env));
 // Both rule files are validated at startup (egress-rules.ts): registries GET/HEAD only, no stale
 // allowWhenTainted, no denied host.
 const egressRules: Record<string, EgressRule[]> = process.env.EGRESS_RULES_FILE
@@ -102,9 +126,15 @@ const defaultEgressRules: EgressRule[] = process.env.EGRESS_DEFAULT_RULES_FILE
     )
   : [];
 const rulesFor = (owner: string) => [...defaultEgressRules, ...(egressRules[owner] ?? [])];
-// GitHub App reads through the proxy (repo-scoped tokens minted on the node), for the owners in
-// GITHUB_APP_OWNERS only. The App itself is node config (/etc/sandbox-egress/config.json).
-const githubFor = githubAppAccessFromEnv(process.env);
+// GitHub App reads through the proxy (repo-scoped tokens minted on the node): with entitlements,
+// for owners allowed scope github_read; otherwise (no better-auth) for GITHUB_APP_OWNERS. The
+// App itself is node config (/etc/sandbox-egress/config.json).
+const githubFor = entitlements
+  ? (owner: string) =>
+      entitlements!.allowed(owner, { type: "scope", name: "github_read" })
+        ? { app: true as const }
+        : undefined
+  : githubAppAccessFromEnv(process.env);
 const sandboxNetwork =
   egressWriter && process.env.EGRESS_CA_FILE
     ? new CommandNetworkProvisioner(
@@ -247,16 +277,44 @@ const provider =
             ...(egressWriter
               ? { egress: egressWriter, egressRules: rulesFor, egressGitHub: githubFor }
               : {}),
-            ...(previewTools ? { previewTools } : {}),
-            visualTools: (o: string, i: string, call) => {
-              if (!visual)
-                throw new ApiError(501, "Visual replies are not configured on this server");
-              return visual.execute(o, i, call);
-            },
           },
         )
       : new FixtureSandbox();
-const broker = new SandboxBroker(store, provider);
+// Host tools (host-tools.ts): previews and visual replies run on the backend through the ledger,
+// after the registry's destination check.
+const hostTools = new HostToolRegistry({
+  ...(previewTools
+    ? previewHostTools({
+        tools: previewTools,
+        refreshEnv: async (o, i) => {
+          const b = (await store.snapshot(o, i, { events: false })).hands;
+          if (b?.state === "ready") await installPreviewEnv(o, i, b);
+          return undefined;
+        },
+      })
+    : {}),
+  // trino_query: placeholder backend only (TRINO_MODE=fake); the HTTP client is not wired in v1.
+  ...(process.env.TRINO_MODE === "fake"
+    ? {
+        trino_query: trinoHostTool({
+          client: new FakeTrino(),
+          emailOf: async (owner) => auth?.emailOf(owner),
+        }),
+      }
+    : {}),
+  ...(kataHands
+    ? visualHostTools({
+        execute: (o, i, call) => {
+          if (!visual) throw new ApiError(501, "Visual replies are not configured on this server");
+          return visual.execute(o, i, call);
+        },
+      })
+    : {}),
+});
+const broker = new SandboxBroker(store, provider, {
+  hostTools,
+  ...(entitlements ? { entitled: (c, tool) => entitlements!.assertTool(c.owner, tool) } : {}),
+});
 // Model-facing description of the sandbox; allowed hosts come from the node's default rules.
 const systemPrompt = sandboxSystemPrompt(defaultEgressRules);
 const livePi = process.env.HARNESS_MODE === "pi";
@@ -409,11 +467,24 @@ const { server, closeStreams } = api(
             auth,
             settings: users,
             policy: settingsPolicy,
-            accounts: new AccountAdmin(auth.admin, store, deleter, users, (m) => console.log(m)),
-            onUser: (u: { id: string }) => owners.add(u.id),
+            accounts: new AccountAdmin(
+              auth.admin,
+              store,
+              deleter,
+              users,
+              (m) => console.log(m),
+              async (userId) => {
+                await entitlements?.removeUser(userId);
+              },
+            ),
+            onUser: (u: { id: string; role?: string }) => {
+              owners.add(u.id);
+              entitlements?.noteRole(u.id, u.role);
+            },
           },
         }
       : {}),
+    ...(entitlements ? { entitlements } : {}),
     deleter,
     terminals,
     ...(files ? { files } : {}),

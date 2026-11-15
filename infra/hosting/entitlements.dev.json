@@ -1,0 +1,5 @@
+[
+  { "subject": { "type": "role", "id": "admin" }, "object": { "type": "tool", "name": "trino_query" }, "effect": "allow" },
+  { "subject": { "type": "role", "id": "admin" }, "object": { "type": "tool", "name": "github_create_pr" }, "effect": "allow" },
+  { "subject": { "type": "role", "id": "admin" }, "object": { "type": "scope", "name": "github_read" }, "effect": "allow" }
+]
