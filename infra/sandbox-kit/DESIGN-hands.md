@@ -112,32 +112,25 @@ dedupe, deadline and output limit is the alternative.
 ## Broker integration and sandbox policy (settled 2026-10-11)
 
 `HandsSandbox` adapts `HandsProvider` to the broker's `SandboxProvider`. The broker passes
-`execId`, `epoch`, `owner`, `conversationId` and `tainted` to `execute`. These are optional
+`execId`, `epoch`, `owner` and `conversationId` to `execute`. These are optional
 extras; `RemoteSandbox`'s wire format is unchanged.
 
 **Every built-in Pi tool runs in the sandbox.** `bash`, `read`, `write`, `edit`, `grep`, `find`
 and `ls` are all bridged as argv over the exec transport (`sandboxArgv` in `src/hands.ts`);
 none is emulated on the host. `edit` is a read, then a sha256-guarded write: if the file changed
-in between, the write is not applied (exit 75 in the sandbox, 409 to the caller). Every result
-carries `productionData: false`.
+in between, the write is not applied (exit 75 in the sandbox, 409 to the caller).
 
-**Classification.** The sandbox is sandbox work, not production. `HandsSandbox` declares
-`provenanceSource: "declared"`, so the broker trusts the per-tool policy instead of tainting
-an unclassifiable remote provider. In `DEFAULT_TOOL_POLICIES`, `bash` is `egress: "proxied"`:
-its network access goes only through the egress proxy (DESIGN-egress.md). The broker lets
-"proxied" egress run in a tainted conversation only when the provider declares
-`egressBoundary: "proxy"`. `HandsSandbox` declares that only when it is built with an
-`EgressPolicyWriter`. Before each exec it writes the conversation's policy (allowlist,
-injection rules, `tainted`) to the trusted directory the proxy reads. A tainted conversation
-then reaches only rules marked `allowWhenTainted`. That enforcement happens at the proxy,
-outside the guest. Without a writer the boundary is `"none"`, and tainted bash is refused as
-before.
+**No taint (2026-11).** Linguini has no sensitive-thread state: nothing a conversation reads
+changes what it may do next. The controls are the egress proxy (allowlist, registry read-only,
+open-web budget, secret scanning; DESIGN-egress.md), the external-link click-through page and
+the preview CSP. In `DEFAULT_TOOL_POLICIES`, `bash` is `egress: "proxied"`: its network access
+goes only through the egress proxy. `HandsSandbox` declares `egressBoundary: "proxy"` when it
+is built with an `EgressPolicyWriter`; before each exec it writes the conversation's policy
+(allowlist, injection rules) to the trusted directory the proxy reads.
 
-**Policy before allocation.** `executeLocked` now runs `assertNotBlocked`, the egress check, and
-the declared-provenance check _before_ `HandsProvider.ensure`. A refused call never starts a VM.
-Unit tests cover this: taint, a blocked ledger, and a production tool each make zero Nomad
-requests. The finding recorded here before (remote without classify meant tainted, plus
-allocate-before-check) is resolved.
+**Policy before allocation.** `executeLocked` runs `assertNotBlocked` and the tool-policy
+lookup _before_ `HandsProvider.ensure`. A refused call never starts a VM; a unit test checks that
+a blocked ledger makes zero Nomad requests.
 
 **Kata only, twice.** The backend refuses to submit any job whose tasks are not
 `driver = "docker"` with `runtime = "kata"` and not privileged. `assertKataJob` raises

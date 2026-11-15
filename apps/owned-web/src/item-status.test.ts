@@ -12,7 +12,6 @@ const conv = (status: string) =>
     title: "t",
     createdAt: "2026-10-12T10:00:00.000Z",
     updatedAt: "2026-10-12T12:00:00.000Z",
-    tainted: false,
     sandboxAllocated: false,
     jobs: [{ id: "j1", text: "hi", status, requestedAt: "2026-10-12T11:00:00.000Z" }],
     events: [

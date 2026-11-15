@@ -5,12 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import { SqliteStore, initial, read } from "./store.ts";
-import {
-  SandboxBroker,
-  FixtureSandbox,
-  assertPublicationAllowed,
-  type SandboxProvider,
-} from "./sandbox.ts";
+import { SandboxBroker, FixtureSandbox, type SandboxProvider } from "./sandbox.ts";
 import { gateway } from "./gateway.ts";
 import { issueCapability } from "./capability.ts";
 import { sandboxTools } from "./pi-tools.ts";
@@ -75,43 +70,7 @@ test("owner isolation and lazy allocation survive duplicate and conflicting comm
   }
 });
 
-test("durable production-data taint blocks PR, publication and shell bypass after restart", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "sandbox-taint-")),
-    db = join(dir, "state.sqlite");
-  let store = new SqliteStore(db);
-  try {
-    await store.create(initial("a", "alice"));
-    const broker = new SandboxBroker(store, new FixtureSandbox());
-    await broker.execute("alice", "a", {
-      id: "prod",
-      tool: "bash",
-      args: { command: "fixture:production-read" },
-    });
-    await store.close();
-    store = new SqliteStore(db);
-    const restarted = new SandboxBroker(store, new FixtureSandbox());
-    const c = await read(store, "alice", "a");
-    assert.equal(c.tainted, true);
-    assert.throws(() => assertPublicationAllowed(c), /permanently blocks/);
-    await assert.rejects(
-      restarted.execute("alice", "a", {
-        id: "publish",
-        tool: "bash",
-        args: { command: "gh pr create" },
-      }),
-      /disabled after production-data ingress/,
-    );
-    await store.mutate("alice", "a", (c) => {
-      c.files = {};
-    });
-    assert.equal((await read(store, "alice", "a")).tainted, true);
-  } finally {
-    await store.close();
-    await rm(dir, { recursive: true });
-  }
-});
-
-test("ambiguous remote outcomes are not replayed and taint commits before dispatch", async () => {
+test("ambiguous remote outcomes are not replayed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sandbox-crash-"));
   const store = new SqliteStore(join(dir, "state.sqlite"));
   try {
@@ -131,7 +90,6 @@ test("ambiguous remote outcomes are not replayed and taint commits before dispat
       args: { path: "x", content: "x" },
     };
     await assert.rejects(new SandboxBroker(store, provider).execute("alice", "a", call), /crashed/);
-    assert.equal((await read(store, "alice", "a")).tainted, true);
     await assert.rejects(
       new SandboxBroker(store, provider).execute("alice", "a", call),
       /outcome unknown/,
@@ -208,7 +166,7 @@ test("Pi registered tools reach the gateway; capabilities cannot change owners; 
       args: { command: "fixture:production-read" },
     });
     for (const route of ["/actions/create-pr", "/actions/publish"])
-      assert.equal((await request(route, {})).status, 403);
+      assert.equal((await request(route, {})).status, 501);
     assert.equal((await request("/terminal", {})).status, 404);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));

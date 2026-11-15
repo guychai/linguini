@@ -20,7 +20,7 @@ test("GitHub App access is per owner and off by default", () => {
 test("the policy file carries github only when set", async () => {
   const dir = await mkdtemp(join(tmpdir(), "egress-gh-"));
   const writer = new FileEgressPolicyWriter(dir);
-  const base = { version: 1 as const, workspaceId: "ws", tainted: false, rules: [] };
+  const base = { version: 1 as const, workspaceId: "ws", rules: [] };
   await writer.apply({ ...base, conversationKey: "aaaaaaaaaaaaaaaa", github: { app: true } });
   await writer.apply({ ...base, conversationKey: "bbbbbbbbbbbbbbbb", github: undefined });
   const a = JSON.parse(await readFile(join(dir, "aaaaaaaaaaaaaaaa.json"), "utf8"));

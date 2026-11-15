@@ -3,7 +3,7 @@
  *
  * - The PTY lives in the sandbox (Nomad exec with tty); nothing runs on the host and the backend's
  *   environment (model key, DB URL) is never passed: exec inherits only the sandbox task's env.
- * - User-only: Pi has no access; terminal I/O is not in the tool ledger and does not taint.
+ * - User-only: Pi has no access; terminal I/O is not in the tool ledger.
  *   Only open/close and byte counts are logged, never keystrokes or output.
  * - Scrollback is an in-memory ring buffer per terminal; shells do not survive a backend restart.
  * - Limits: per conversation and per node. Opening provisions the sandbox if needed.

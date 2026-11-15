@@ -5,7 +5,7 @@
 // idempotent writes are re-sent with the same idempotency key, and an interrupted
 // non-idempotent call becomes "outcome unknown", which blocks further work in the
 // conversation until someone resolves it. The ledger lives in the conversation row, so
-// it commits atomically with taint, receipts and the lease.
+// it commits atomically with receipts and the lease.
 import { createHash } from "node:crypto";
 import { ApiError, append, type Conversation } from "./store.ts";
 import type { ToolResult } from "./sandbox.ts";
@@ -14,20 +14,18 @@ export type ReplayClass = "safe-read" | "idempotent-write" | "non-idempotent";
 export type Destination = "sandbox" | "production" | "publication";
 export interface ToolPolicy {
   replay: ReplayClass;
-  /** Where the call reads or writes. Anything from `production` taints the conversation. */
+  /** Where the call reads or writes (a label for the ledger, audit and recovery). */
   destination: Destination;
   /**
-   * Whether the call can move data out.
+   * Whether the call can move data out (descriptive; recorded in the policy version).
    * - `false`: no egress.
-   * - `true`: direct egress (publication, an unproxied shell): denied once tainted.
+   * - `true`: direct egress (publication, a user's browser).
    * - `"proxied"`: network egress only through the node's egress proxy, whose per-conversation
-   *   allowlist is the boundary. After taint it is allowed only when the provider declares that
-   *   boundary (`egressBoundary: "proxy"`), because that provider hands the taint to the proxy,
-   *   which then narrows the allowlist. Otherwise it is denied like `true`.
+   *   allowlist, caps, budgets and secret scanning are the boundary.
    */
   egress: boolean | "proxied";
 }
-/** Who enforces egress for a provider's tools. Only "proxy" relaxes the taint rule for "proxied". */
+/** Who enforces egress for a provider's tools: the node's egress proxy, or nobody (fixtures). */
 export type EgressBoundary = "none" | "proxy";
 export type ToolPolicies = Readonly<Record<string, ToolPolicy>>;
 
@@ -46,8 +44,10 @@ export const DEFAULT_TOOL_POLICIES: ToolPolicies = Object.freeze({
   find: { replay: "safe-read", destination: "sandbox", egress: false },
   ls: { replay: "safe-read", destination: "sandbox", egress: false },
   // Preview ports: an upsert/delete of this conversation's share (same effect when repeated).
-  // Exposes the sandbox port to the conversation's owner over the tailnet only; no egress.
-  share_port: { replay: "idempotent-write", destination: "sandbox", egress: false },
+  // Sharing exposes the sandbox port to the owner's browser (sink: user-browser), so it is declared
+  // egress-capable; the preview origin's sandboxed CSP (no top navigation, no popups,
+  // connect-src 'self') is the control. Unsharing only removes access, so it stays non-egress.
+  share_port: { replay: "idempotent-write", destination: "sandbox", egress: true },
   unshare_port: { replay: "idempotent-write", destination: "sandbox", egress: false },
   // Visual replies: the page is rendered by Linguini's render worker, which has no network, and
   // reads images only from this sandbox (files API). html_render stores the page in this
@@ -129,21 +129,6 @@ export function assertNotBlocked(c: Conversation, except?: string) {
       `Blocked: the outcome of ${blocking.tool} call ${blocking.callId} (${blocking.execId}) is unknown; resolve it before more work runs`,
       "tool_outcome_unknown",
     );
-}
-export function assertEgressAllowed(
-  c: Conversation,
-  policy: ToolPolicy,
-  tool: string,
-  boundary: EgressBoundary = "none",
-) {
-  if (!c.tainted || !policy.egress) return;
-  if (policy.egress === "proxied" && boundary === "proxy") return;
-  if (policy.destination === "publication")
-    throw new ApiError(403, "Production-data taint permanently blocks PR and publication actions");
-  throw new ApiError(
-    403,
-    `Tool "${tool}" disabled after production-data ingress: it is declared egress-capable`,
-  );
 }
 export function markUnknown(c: Conversation, e: LedgerEntry, reason: string) {
   if (e.status !== "intent") return;

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { verifyCapability } from "./capability.ts";
 import { ApiError, initial, read } from "./store.ts";
-import { SandboxBroker, assertPublicationAllowed, type ToolCall } from "./sandbox.ts";
+import { SandboxBroker, type ToolCall } from "./sandbox.ts";
 import { assertNotBlocked } from "./ledger.ts";
 
 export async function body(
@@ -41,7 +41,6 @@ export function gateway(broker: SandboxBroker, key: string) {
         response.setHeader("cache-control", "no-store");
         response.end(
           JSON.stringify({
-            tainted: c.tainted,
             sandboxAllocated: !!c.sandbox,
             sequence: c.events.at(-1)?.seq ?? 0,
           }),
@@ -64,9 +63,8 @@ export function gateway(broker: SandboxBroker, key: string) {
         // Keyed off the declared publication destination, not a route or tool name.
         await broker.store.mutate(owner, id, (c) => {
           assertNotBlocked(c);
-          assertPublicationAllowed(c);
         });
-        // Not implemented (see engine.ts): only the taint checks above are real.
+        // Not implemented (see engine.ts): only the blocked-ledger check above is real.
         throw new ApiError(
           501,
           "Not implemented: pull requests and publishing are not available yet",

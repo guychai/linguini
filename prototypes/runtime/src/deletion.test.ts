@@ -98,7 +98,6 @@ for (const kind of ["sqlite", "postgres"] as const)
         version: 1,
         conversationKey: "0".repeat(20),
         workspaceId: "x",
-        tainted: false,
         rules: [],
       });
       const f = fakes();

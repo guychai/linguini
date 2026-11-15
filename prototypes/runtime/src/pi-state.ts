@@ -17,7 +17,7 @@ export function recoverPiState(c: Conversation) {
       for (const block of message.content)
         if (block.type === "toolCall" && !results.has(block.id)) {
           const receipt = c.jobs.map((j) => c.receipts[`tool:${j.id}:${block.id}`]).find(Boolean)
-            ?.result as { text?: string; productionData?: boolean } | null | undefined;
+            ?.result as { text?: string } | null | undefined;
           const entry = Object.values(c.ledger ?? {}).find((e) =>
             c.jobs.some((j) => e.callId === `${j.id}:${block.id}`),
           );

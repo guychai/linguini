@@ -74,7 +74,6 @@ export class FixtureHarness implements Harness {
         tool: call.tool,
         args: call.args,
         text: result.text,
-        productionData: result.productionData === true,
       });
     }
     for (const delta of [
@@ -252,7 +251,7 @@ export class PiHarness implements Harness {
         const result = e.result as
           | {
               content?: Array<{ type: string; text?: string }>;
-              details?: { productionData?: boolean };
+              details?: unknown;
             }
           | undefined;
         next("tool.output", {
@@ -264,7 +263,6 @@ export class PiHarness implements Harness {
               .map((c) => c.text ?? "")
               .join("\n") ?? "",
           isError: e.isError,
-          productionData: result?.details?.productionData === true,
         });
       }
     });

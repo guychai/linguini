@@ -8,7 +8,8 @@
  *   are dropped. Only cookies the preview itself set (stored under an `lpv_` prefix, path-scoped
  *   to the preview) go back to it.
  * - Response hygiene: `Content-Security-Policy: sandbox allow-scripts allow-forms` (opaque
- *   origin, so preview pages cannot use Linguini's origin), always: there is no opt-out;
+ *   origin, so preview pages cannot use Linguini's origin) plus fetch directives that keep the
+ *   page's requests on the preview itself (PREVIEW_CSP), always: there is no opt-out;
  *   Service-Worker-Allowed and Clear-Site-Data are dropped;
  *   Set-Cookie is renamed, path-scoped to the preview, and loses Domain.
  * - Linguini's own API refuses requests that come from preview pages (`fromPreview`).
@@ -373,7 +374,19 @@ export function rewriteSetCookie(value: string, prefix: string): string | null {
   );
 }
 
-export const PREVIEW_CSP = "sandbox allow-scripts allow-forms";
+/**
+ * Sent on every preview document response (not on a 101 upgrade). `sandbox` gives the page an
+ * opaque origin (no Linguini cookies or storage); the fetch directives keep its scripts from
+ * reaching anything but the preview itself (no third-party fetch, image beacon or form post).
+ * `sandbox` without allow-top-navigation / allow-popups keeps the page from navigating the tab or
+ * opening windows; only authenticated users who can see the conversation reach it at all.
+ */
+export const PREVIEW_CSP =
+  "sandbox allow-scripts allow-forms; default-src 'self' data: blob:; connect-src 'self'; " +
+  "img-src 'self' data: blob:; form-action 'self'; base-uri 'self'; " +
+  // Inline <script>/<style> open no network path (every fetch directive above is still 'self'),
+  // and dev servers need them: Vite injects CSS as <style> elements and an inline HMR preamble.
+  "script-src 'self' 'unsafe-inline' data: blob:; style-src 'self' 'unsafe-inline' data: blob:";
 /** Headers sent back to the browser. */
 export function previewResponseHeaders(
   headers: IncomingMessage["headers"],
@@ -447,7 +460,11 @@ export interface PreviewProxyOptions {
   ports: PreviewPortStore;
   targets: PreviewTargets;
   activity: PreviewActivity;
-  conversationExists(owner: string, id: string): Promise<void>;
+  /**
+   * Resolves when the conversation exists for this user, rejects otherwise (404). Open preview
+   * connections are closed once it is gone (deleted).
+   */
+  conversationExists(owner: string, id: string): Promise<unknown>;
   resolveOwner(request: IncomingMessage): Promise<string | undefined> | string | undefined;
   timeoutMs?: number;
   /** How long the sandbox app may take to answer a WebSocket handshake. */
@@ -456,6 +473,8 @@ export interface PreviewProxyOptions {
   grantKey?: Buffer;
   /** Test seam; production accepts only sandbox network addresses (10.x). */
   allowTarget?: (host: string) => boolean;
+  /** How often an open preview connection re-checks that its conversation still exists (5 s). */
+  goneRecheckMs?: number;
 }
 const notFound = (res: ServerResponse) => {
   res.writeHead(404, {
@@ -496,6 +515,26 @@ export class PreviewProxy {
           )
         : undefined;
     return { ...p, owner, shared, prefix, grant };
+  }
+  /**
+   * While a preview connection is open, re-check the conversation; `close` runs once it is gone.
+   * Returns the stop function.
+   */
+  private watchGone(owner: string, id: string, close: () => void) {
+    let stopped = false;
+    const timer = setInterval(() => {
+      this.o.conversationExists(owner, id).then(
+        () => undefined,
+        () => {
+          if (!stopped) close();
+        },
+      );
+    }, this.o.goneRecheckMs ?? 5_000);
+    timer.unref();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
   }
   private async target(owner: string, id: string) {
     const host = await this.o.targets.address(owner, id);
@@ -541,6 +580,12 @@ export class PreviewProxy {
       headers: forwardRequestHeaders(request.headers, r.prefix),
       timeout: this.o.timeoutMs ?? 120_000,
     });
+    // A long response (event stream, slow download) stops when the conversation is deleted.
+    const stopWatch = this.watchGone(r.owner, r.conversationId, () => {
+      upstream.destroy(new Error("conversation deleted"));
+      response.destroy();
+    });
+    response.on("close", stopWatch);
     upstream.on("response", (res) => {
       const out = previewResponseHeaders(res.headers, r.prefix);
       if (r.grant) out["set-cookie"] = [...((out["set-cookie"] as string[]) ?? []), r.grant];
@@ -581,7 +626,8 @@ export class PreviewProxy {
     let r;
     try {
       r = await this.resolve(request, url.pathname);
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) return reject(403, "Forbidden");
       return reject(401, "Unauthorized");
     }
     if (!r || r.rest === undefined) return reject(404, "Not Found");
@@ -599,9 +645,12 @@ export class PreviewProxy {
     const { owner, conversationId, prefix } = r;
     this.o.activity.opened(owner, conversationId);
     let closed = false;
+    // An open preview socket is closed once the conversation is deleted.
+    const stopWatch = this.watchGone(owner, conversationId, () => done());
     const done = () => {
       if (closed) return;
       closed = true;
+      stopWatch();
       clearTimeout(headTimer);
       this.o.activity.closed(owner, conversationId);
       upstream.destroy();
@@ -737,7 +786,7 @@ export function previewToolHandler(o: {
       text = [
         `Shared port ${port}. Preview URL: ${base}/${port}/`,
         `The app must listen on 0.0.0.0:${port} and serve under the base path /preview/${id}/${port}/ (also in $PREVIEW_BASE_URL_${port} and \`preview-url ${port}\`).`,
-        "Pages are served with CSP sandbox (opaque origin): cookies/localStorage are unavailable to scripts.",
+        "Pages are served with CSP sandbox (opaque origin): cookies/localStorage are unavailable to scripts, and scripts, images, fetch/WebSocket and form posts may only reach the preview itself (no third-party CDNs or APIs).",
         "The user sees a Preview chip in the conversation.",
       ].join("\n");
     } else {

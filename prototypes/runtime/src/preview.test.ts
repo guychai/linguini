@@ -76,6 +76,7 @@ async function rig(t: { after: (f: () => unknown) => void }) {
     },
     resolveOwner: (r) => String(r.headers["x-test-owner"] ?? "alice"),
     allowTarget: (h) => h === "127.0.0.1",
+    goneRecheckMs: 25,
   });
   const front = createServer((req, res) => void proxy.handle(req, res));
   front.on("upgrade", (req, socket, head) => void proxy.upgrade(req, socket, head));
@@ -104,7 +105,8 @@ async function rig(t: { after: (f: () => unknown) => void }) {
         r.end();
       },
     );
-  return { seen, ports, appPort, frontPort, get, activity, targets };
+  const remove = (owner: string, id: string) => void conversations.delete(`${owner}\0${id}`);
+  return { seen, ports, appPort, frontPort, get, activity, targets, remove };
 }
 
 test("preview routing: only shared ports of an existing conversation of this owner; 404 otherwise", async (t) => {
@@ -240,7 +242,7 @@ async function rawUpstream(t: { after: (f: () => unknown) => void }, reply: (s: 
     ports,
     activity: new PreviewActivity(),
     targets: { address: async () => "127.0.0.1" },
-    conversationExists: async () => {},
+    conversationExists: async () => undefined,
     resolveOwner: () => "alice",
     allowTarget: () => true,
     wsHandshakeTimeoutMs: 200,
@@ -424,3 +426,53 @@ test(
     }
   },
 );
+
+test("deleted conversation: its previews answer 404 (HTTP and WebSocket); others unaffected", async (t) => {
+  const r = await rig(t);
+  await r.ports.share("alice", "c1", { port: r.appPort });
+  const base = `/preview/c1/${r.appPort}/`;
+  assert.equal((await r.get(base)).status, 200, "served");
+  r.remove("alice", "c1");
+  const seenBefore = r.seen.length;
+  assert.equal((await r.get(base)).status, 404);
+  assert.equal(r.seen.length, seenBefore, "nothing reached the sandbox app");
+  const ws = new WebSocket(`ws://127.0.0.1:${r.frontPort}${base}ws`);
+  const [, reply] = (await once(ws, "unexpected-response")) as [unknown, IncomingMessage];
+  assert.equal(reply.statusCode, 404);
+  reply.destroy();
+  await r.ports.share("alice", "c2", { port: r.appPort });
+  assert.equal((await r.get(`/preview/c2/${r.appPort}/`)).status, 200);
+});
+
+test("an open preview WebSocket is closed once the conversation is deleted", async (t) => {
+  const r = await rig(t);
+  await r.ports.share("alice", "c1", { port: r.appPort });
+  const ws = new WebSocket(`ws://127.0.0.1:${r.frontPort}/preview/c1/${r.appPort}/ws`);
+  await once(ws, "open");
+  ws.send("before");
+  assert.equal(String((await once(ws, "message"))[0]), "echo:before");
+  const closed = once(ws, "close");
+  r.remove("alice", "c1");
+  await closed;
+  assert.equal(ws.readyState, WebSocket.CLOSED);
+});
+
+test("P0.2 preview CSP: sandboxed, and every fetch directive stays on the preview itself", () => {
+  const directives = new Map(
+    PREVIEW_CSP.split(";").map((d) => {
+      const [name, ...values] = d.trim().split(/\s+/);
+      return [name!, values] as const;
+    }),
+  );
+  assert.deepEqual(directives.get("sandbox"), ["allow-scripts", "allow-forms"]);
+  assert.deepEqual(directives.get("default-src"), ["'self'", "data:", "blob:"]);
+  assert.deepEqual(directives.get("connect-src"), ["'self'"]);
+  assert.deepEqual(directives.get("img-src"), ["'self'", "data:", "blob:"]);
+  assert.deepEqual(directives.get("form-action"), ["'self'"]);
+  assert.deepEqual(directives.get("base-uri"), ["'self'"]);
+  // No directive names a remote origin or a scheme wildcard.
+  for (const [name, values] of directives)
+    for (const v of values)
+      assert.ok(!/^(https?:|wss?:|\*)/.test(v) && !v.includes("."), `${name} ${v}`);
+  assert.ok(!PREVIEW_CSP.includes("allow-same-origin") && !PREVIEW_CSP.includes("allow-popups"));
+});

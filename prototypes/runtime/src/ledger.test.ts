@@ -1,5 +1,5 @@
 // Tool-call ledger: replay classes, intent/observation under the lease epoch, recovery
-// after a real SIGKILL at each ledger boundary, and declared-policy taint/publication.
+// after a real SIGKILL at each ledger boundary, and declared destinations.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -18,7 +18,7 @@ import {
   type Conversation,
   type Store,
 } from "./store.ts";
-import { SandboxBroker, assertPublicationAllowed, type LedgerBoundary } from "./sandbox.ts";
+import { SandboxBroker, type LedgerBoundary } from "./sandbox.ts";
 import { Engine } from "./engine.ts";
 import { api, publicConversation } from "./api.ts";
 import { DEFAULT_TOOL_POLICIES, executionId, unresolved, type LedgerEntry } from "./ledger.ts";
@@ -557,32 +557,21 @@ test("an intent replays only when its recorded class still matches the declared 
   }
 });
 
-test("taint and egress blocking follow the declared destination and egress, not tool names", async () => {
+test("the declared destination is recorded; egress-capable tools still run (no taint)", async () => {
   const t = await local({
     // A read-only tool whose destination is production data.
     fetch_customer: { replay: "safe-read", destination: "production", egress: false },
     // An egress-capable tool with an innocuous name.
     notes_sync: { replay: "non-idempotent", destination: "sandbox", egress: true },
-    // A tool named "bash" that this table declares as non-egress.
-    bash: { replay: "non-idempotent", destination: "sandbox", egress: false },
   });
   try {
     const broker = t.broker();
-    await broker.execute(t.owner, t.id, { id: "pre", tool: "notes_sync", args: {} });
-    // The destination reports ordinary data and the preflight says ordinary; the
-    // declaration alone taints.
     await broker.execute(t.owner, t.id, { id: "q", tool: "fetch_customer", args: { id: 7 } });
     const c = await read(t.store, t.owner, t.id);
-    assert.equal(c.tainted, true);
     assert.equal(c.ledger![executionId(t.owner, t.id, "q")]!.destination, "production");
     const dispatched = t.destination.count("dispatches");
-    await assert.rejects(
-      broker.execute(t.owner, t.id, { id: "s", tool: "notes_sync", args: {} }),
-      /"notes_sync" disabled after production-data ingress/,
-    );
-    await broker.execute(t.owner, t.id, { id: "b", tool: "bash", args: { command: "ls" } });
-    assert.equal(t.destination.count("dispatches"), dispatched + 1, "only the non-egress call ran");
-    assert.throws(() => assertPublicationAllowed(c), /taint permanently blocks/);
+    await broker.execute(t.owner, t.id, { id: "s", tool: "notes_sync", args: {} });
+    assert.equal(t.destination.count("dispatches"), dispatched + 1);
     // Undeclared tools are rejected outright.
     await assert.rejects(
       broker.execute(t.owner, t.id, { id: "u", tool: "read", args: {} }),

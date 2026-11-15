@@ -21,6 +21,7 @@ import {
   validPort,
   type PreviewPortStore,
 } from "./preview.ts";
+import { CLICK_THROUGH_PATH, serveClickThrough } from "./out.ts";
 import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
 import {
@@ -38,7 +39,6 @@ export function publicConversation(c: Conversation) {
     updatedAt: c.updatedAt,
     title: c.title,
     metadata: c.metadata ?? {},
-    tainted: c.tainted,
     sandboxAllocated: c.sandbox !== null,
     jobs: c.jobs,
     events: c.events,
@@ -176,6 +176,11 @@ export function api(
           model: process.env.PI_MODEL ?? "claude-sonnet-4-5",
           thinkingLevel: process.env.PI_THINKING_LEVEL ?? null,
         });
+        return;
+      }
+      // Click-through page for external links in replies (out.ts): no session needed, holds no data.
+      if (request.method === "GET" && url.pathname === CLICK_THROUGH_PATH) {
+        serveClickThrough(response, url.searchParams.get("u"));
         return;
       }
       // Visual reply pages: signed URL, served with the render sandbox CSP (visual.ts). A signed-in

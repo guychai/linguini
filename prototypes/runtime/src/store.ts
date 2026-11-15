@@ -29,7 +29,6 @@ export interface Conversation {
   /** Tombstone: the user deleted this conversation. Hidden everywhere; its sandbox data is being
    * removed (deletion.ts) and the rows are purged once that finishes. */
   deletedAt?: string;
-  tainted: boolean;
   /** Files the user saved in the Files panel since Pi's last turn (files.ts); consumed by the
    * engine, which tells Pi about them at the start of its next turn. */
   userEdits?: string[];
@@ -85,7 +84,6 @@ export function initial(id: string, owner: string, title = "New conversation"): 
     title,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    tainted: false,
     sandbox: null,
     files: {},
     receipts: {},

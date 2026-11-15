@@ -170,7 +170,7 @@ Backend side (`prototypes/runtime/src/hands.ts`): `EgressRule`, `EgressPolicy`,
 - websocket with opt-in works, without opt-in refused;
 - raw TCP in a tunnel killed;
 - DNS: allowed name answered, denied name refused, metadata answer filtered;
-- taint narrowing;
+- registry writes refused, open-web budget exhausted;
 - unknown source;
 - v4-mapped metadata;
 - the audit contains no token, bearer, query or body.
@@ -233,8 +233,7 @@ The docker driver has no allowlist for `network_mode`, so the backend enforces i
 
 2. The broker validates the answer: the name must be `sbx` + the key's first 12 characters, a
    10.x address and gateway in the same /24, and not equal to each other.
-3. The conversation's allowlist is written for the proxy (`FileEgressPolicyWriter`), with
-   `tainted` taken from the conversation.
+3. The conversation's allowlist is written for the proxy (`FileEgressPolicyWriter`).
 4. The job is rendered:
    - `network_mode` and `ipv4_address` set as above, `dns_servers = [gateway]`;
    - no proxy env (egress is transparent; the runtime rejects templates that set any);

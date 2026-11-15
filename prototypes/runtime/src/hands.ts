@@ -691,12 +691,10 @@ export class NomadKataHands implements HandsProvider {
         );
       }
       try {
-        const c = await this.store.snapshot(owner, id, { events: false });
         await sandbox.egress.writer.apply({
           version: 1,
           conversationKey: key,
           workspaceId: binding.workspaceId,
-          tainted: c.tainted === true,
           rules: sandbox.egress.rules(owner, id),
           ...githubField(sandbox.egress.github?.(owner, id)),
         });
@@ -979,7 +977,6 @@ export interface EgressPolicy {
   version: 1;
   conversationKey: string;
   workspaceId: string;
-  tainted: boolean;
   rules: EgressRule[];
   /** Optional (older proxies ignore it): set by trusted server config per owner, never by agents. */
   github?: EgressGitHub;
@@ -1104,15 +1101,12 @@ export function sandboxArgv(
 
 /**
  * Adapter to the broker's SandboxProvider. Every tool (bash, read, write, edit, grep, find, ls)
- * runs inside the conversation's sandbox; nothing runs on the host. Results are sandbox work
- * (`provenanceSource: "declared"`). With an egress policy writer, the provider is the proxy
- * boundary: before each call it hands the conversation's taint and trusted allowlist to the
- * node's egress proxy, which narrows egress after taint. Without one it claims no boundary, so
- * the broker keeps denying "proxied" egress after taint.
+ * runs inside the conversation's sandbox; nothing runs on the host. With an egress policy writer,
+ * the provider is the proxy boundary: before each call it hands the conversation's trusted
+ * allowlist to the node's egress proxy.
  */
 export class HandsSandbox implements SandboxProvider {
   readonly kind = "remote";
-  readonly provenanceSource = "declared";
   readonly egressBoundary: "proxy" | "none";
   constructor(
     private readonly hands: HandsProvider,
@@ -1149,9 +1143,9 @@ export class HandsSandbox implements SandboxProvider {
   }
   /**
    * For the user's interactive terminal: provision the sandbox if needed and apply the
-   * conversation's current egress policy (the terminal itself never taints). Returns the alloc.
+   * conversation's current egress policy. Returns the alloc.
    */
-  async prepareInteractive(owner: string, conversationId: string, tainted: boolean) {
+  async prepareInteractive(owner: string, conversationId: string) {
     const binding = await this.hands.ensure(owner, conversationId);
     if (binding.state !== "ready" || !binding.allocId)
       throw new ApiError(503, `Sandbox not ready (${binding.state})`, "hands_not_ready");
@@ -1160,7 +1154,6 @@ export class HandsSandbox implements SandboxProvider {
         version: 1,
         conversationKey: binding.jobId.slice("hands-".length, binding.jobId.lastIndexOf("-g")),
         workspaceId: binding.workspaceId,
-        tainted,
         rules: this.options.egressRules?.(owner, conversationId) ?? [],
         ...githubField(this.options.egressGitHub?.(owner, conversationId)),
       });
@@ -1185,7 +1178,6 @@ export class HandsSandbox implements SandboxProvider {
         version: 1,
         conversationKey: binding.jobId.slice("hands-".length, binding.jobId.lastIndexOf("-g")),
         workspaceId: binding.workspaceId,
-        tainted: options.tainted === true,
         rules: this.options.egressRules?.(owner, conversationId) ?? [],
         ...githubField(this.options.egressGitHub?.(owner, conversationId)),
       });
@@ -1246,7 +1238,7 @@ export class HandsSandbox implements SandboxProvider {
       if (r.exitCode === 75) throw new ApiError(409, "File changed during edit; not applied");
       if (r.exitCode !== 0)
         throw new ApiError(502, `Edit failed in sandbox: ${r.stderr.slice(0, 500)}`);
-      return { text: "File edited in sandbox", productionData: false };
+      return { text: "File edited in sandbox" };
     }
     const { argv, stdin } = sandboxArgv(call.tool, args);
     const r = await run(argv, stdin);
@@ -1257,27 +1249,24 @@ export class HandsSandbox implements SandboxProvider {
           text:
             limited(`${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`) +
             `\n[exit ${r.exitCode}]`,
-          productionData: false,
         };
       case "read": {
         if (r.exitCode !== 0) throw new ApiError(404, "Sandbox file not found");
         // The window was already cut in the sandbox (sed -n a,bp) when offset/limit were given.
         return {
           text: limited(argv[0] === "sed" ? r.stdout.replace(/\n$/, "") : r.stdout),
-          productionData: false,
         };
       }
       case "write":
         // A failed write may have partly applied: 5xx keeps the ledger's "unknown" semantics.
         if (r.exitCode !== 0)
           throw new ApiError(502, `Write failed in sandbox: ${r.stderr.slice(0, 500)}`);
-        return { text: "File written in sandbox", productionData: false };
+        return { text: "File written in sandbox" };
       case "ls": {
         if (r.exitCode !== 0) throw new ApiError(404, "Sandbox directory not found");
         const limit = typeof args.limit === "number" ? args.limit : 500;
         return {
           text: limited(r.stdout.split("\n").filter(Boolean).sort().slice(0, limit).join("\n")),
-          productionData: false,
         };
       }
       case "find": {
@@ -1291,11 +1280,11 @@ export class HandsSandbox implements SandboxProvider {
           .filter(match)
           .sort()
           .slice(0, limit);
-        return { text: limited(found.join("\n") || "No files found"), productionData: false };
+        return { text: limited(found.join("\n") || "No files found") };
       }
       case "grep": {
         // grep exits 1 for "no matches" and 2 for errors.
-        if (r.exitCode === 1) return { text: "No matches found", productionData: false };
+        if (r.exitCode === 1) return { text: "No matches found" };
         if (r.exitCode !== 0) throw new ApiError(400, `grep failed: ${r.stderr.slice(0, 500)}`);
         const glob = typeof args.glob === "string" ? globMatcher(args.glob) : () => true;
         const limit = typeof args.limit === "number" ? args.limit : 100;
@@ -1305,7 +1294,7 @@ export class HandsSandbox implements SandboxProvider {
           .filter((l) => glob(l.replace(/^\/workspace\//, "").split(/[:-]\d+[:-]/)[0]!))
           .map((l) => l.replace(/^\/workspace\//, ""))
           .slice(0, limit);
-        return { text: limited(lines.join("\n") || "No matches found"), productionData: false };
+        return { text: limited(lines.join("\n") || "No matches found") };
       }
       default:
         throw new ApiError(403, "Tool unavailable");

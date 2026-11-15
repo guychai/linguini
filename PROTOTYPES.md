@@ -134,6 +134,11 @@ replace event deltas, so large histories require pagination work.
 
 ## Sandbox interface and taint
 
+> **Superseded (2026-11, Linguini rework R1/R2):** the owned runtime no longer has taint or a
+> sensitive-thread flag. Egress control is the proxy (allowlist, registry read-only, open-web
+> budget, secret scanning), external links go through a click-through page, and previews rely
+> on their sandboxed CSP. This section and the tables below record the earlier prototype design.
+
 Allocation is lazy: opening a conversation or sending a text-only fixture prompt
 does not allocate a sandbox. The first filesystem/bash call allocates one using
 an owner/conversation idempotency key. Fixture files, results, command receipts

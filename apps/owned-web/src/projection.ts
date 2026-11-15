@@ -152,7 +152,7 @@ export function projection(c: Conversation) {
     creationSource: "web",
     id: c.id,
     projectId: "owned-project",
-    title: c.tainted ? `${c.title} · Sensitive data: exports blocked` : c.title,
+    title: c.title,
     providerInstanceId: "pi",
     modelSelection: MODEL,
     runtimeMode: "full-access",

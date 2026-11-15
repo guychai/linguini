@@ -1,13 +1,14 @@
 diff --git a/apps/web/src/components/ChatMarkdown.tsx b/apps/web/src/components/ChatMarkdown.tsx
-index dd0343ca990ec556219320c98648b70cc1aea99a..bc59273c5d40b1dc2db65159313bc9f9a53319a9 100644
+index dd0343ca990ec556219320c98648b70cc1aea99a..d141e05e0de0ff21b9e35e883bbb94d3a149c506 100644
 --- a/apps/web/src/components/ChatMarkdown.tsx
 +++ b/apps/web/src/components/ChatMarkdown.tsx
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
 +import { restrictGeneratedContent, safeGeneratedLink } from "../lib/prototypeContentPolicy";
++import { clickThroughLink } from "./chat/linguiniGeneratedLinks";
  import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
  import {
    buildFileLinkParentSuffixByPath,
-@@ -2490,6 +2491,7 @@ function useChatMarkdownState({
+@@ -2490,6 +2492,7 @@ function useChatMarkdownState({
      if (parseComposerContextHref(href)) return href;
      if (parseThreadLinkHref(href)) return href;
      if (isWindowsDrivePathHref(href)) return href;
@@ -15,7 +16,16 @@ index dd0343ca990ec556219320c98648b70cc1aea99a..bc59273c5d40b1dc2db65159313bc9f9
      return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
    }, []);
    // Re-emit highlighted content as markdown so copying out of the rendered
-@@ -3229,6 +3231,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
+@@ -2949,6 +2952,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
+       renderContextReference,
+       text,
+     } = use(ChatMarkdownRendererContext);
++    const external = clickThroughLink(restrictGeneratedContent, href, children);
++    if (external) return external;
+     const citation = href ? parseAssistantCitationHref(href) : null;
+     if (citation) return <AssistantCitationChip citation={citation} />;
+     // A thread link names a thread in this message's environment and opens it in the app.
+@@ -3229,6 +3234,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
      );
    },
    img: function MarkdownImage({ node, title, src, alt, ...props }) {

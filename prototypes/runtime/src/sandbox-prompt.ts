@@ -50,7 +50,7 @@ Lifecycle
 Previews (show the user a running web app)
 - Call share_port with the port; it returns the preview URL https://<host>/preview/<conversation>/<port>/. The user opens it from a Preview chip; nothing else is reachable from outside.
 - The server must listen on 0.0.0.0 (not localhost) and serve everything under that base path, because the proxy forwards the full path unchanged. In the sandbox: \`preview-url <port>\` prints the base URL; $PREVIEW_BASE_URL_<port> is set in bash after sharing. Set the framework's base path to /preview/<conversation>/<port>/ (path of that URL): Vite \`base\` (and \`server.host: true\`, \`server.allowedHosts: true\`, HMR works through the same path), Next.js \`basePath\`, Express/others a BASE_PATH prefix or router mount; make redirects, asset URLs and OAuth callback URLs use the full preview URL.
-- Pages are served with CSP \`sandbox allow-scripts allow-forms\` (opaque origin: no cookies or localStorage for scripts). This cannot be turned off; apps should not depend on them.
+- Pages are served with a sandboxing CSP (opaque origin: no cookies or localStorage for scripts) that lets the page load scripts, styles, images, fonts, fetch/XHR/WebSocket and form posts only from the preview itself: CDN scripts, web fonts, third-party APIs and remote images fail, so install and bundle them. This cannot be turned off; apps should not depend on them.
 - Use unshare_port when a preview is no longer needed.
 
 Visual replies (show a chart, table, diagram or mockup inside your reply)

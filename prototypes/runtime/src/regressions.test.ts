@@ -1,7 +1,7 @@
 // Lab regressions ported to the owned runtime (agent-platform-prototypes tests-local/gaps):
 // Stop must not poison later prompts, a model/provider error must not block the conversation,
-// request IDs are scoped per conversation and conflict on a different payload, and production
-// taint covers every egress-equivalent (bash and publication). Fake harnesses and fake
+// request IDs are scoped per conversation and conflict on a different payload, and with no
+// taint, bash keeps working after a production-style read. Fake harnesses and fake
 // sandboxes only; ordering is driven by gates, never by sleeps.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +21,7 @@ import {
 } from "./store.ts";
 import { Engine } from "./engine.ts";
 import { FixtureHarness, type Harness, type HarnessFactory, type Sink } from "./harness.ts";
-import { FixtureSandbox, SandboxBroker, type SandboxProvider } from "./sandbox.ts";
+import { FixtureSandbox, SandboxBroker } from "./sandbox.ts";
 import { gateway } from "./gateway.ts";
 import { issueCapability } from "./capability.ts";
 
@@ -327,12 +327,12 @@ for (const kind of ["sqlite", "postgres"] as const) {
   );
 
   test(
-    `${kind}: production taint blocks bash and publication, including within the same turn`,
+    `${kind}: no taint: bash keeps working after a production-style read; publication stubs answer 501`,
     { skip, timeout: 30_000 },
     async () => {
-      const dir = await mkdtemp(join(tmpdir(), "regress-taint-")),
+      const dir = await mkdtemp(join(tmpdir(), "regress-notaint-")),
         store = await open(dir),
-        owner = `taint-${randomUUID()}`,
+        owner = `notaint-${randomUUID()}`,
         id = randomUUID();
       const broker = new SandboxBroker(store, new FixtureSandbox());
       const engine = new Engine(
@@ -344,34 +344,28 @@ for (const kind of ["sqlite", "postgres"] as const) {
       );
       try {
         await store.create(initial(id, owner));
-        // End to end through the worker: production read, then bash in a later turn.
         await engine.command(owner, id, {
           commandId: "prod",
           kind: "prompt",
           text: "/fixture bash fixture:production-read",
         });
         await engine.command(owner, id, {
-          commandId: "egress",
+          commandId: "later",
           kind: "queue",
           text: "/fixture bash ls",
         });
         await engine.idle(owner, id);
-        let c = await read(store, owner, id);
-        assert.equal(c.tainted, true);
+        const c = await read(store, owner, id);
+        assert.equal(status(c, "later"), "done");
         assert.ok(
-          !c.events.some((e) => e.type === "tool.result" && e.data.callId === "egress:tool:0"),
+          c.events.some((e) => e.type === "tool.result" && e.data.callId === "later:tool:0"),
         );
-        assert.equal(status(c, "egress"), "interrupted");
         for (const kind of ["create_pr", "publish"] as const)
           await assert.rejects(
             engine.command(owner, id, { commandId: kind, kind }),
-            (e: unknown) => e instanceof ApiError && e.status === 403,
+            (e: unknown) => e instanceof ApiError && e.status === 501,
           );
-        await assert.rejects(
-          broker.execute(owner, id, { id: "direct", tool: "bash", args: { command: "pwd" } }),
-          (e: unknown) => e instanceof ApiError && e.status === 403,
-        );
-        // The sandbox gateway's publication routes are blocked too.
+        await broker.execute(owner, id, { id: "direct", tool: "bash", args: { command: "pwd" } });
         const key = "test-only-capability-key-000000000000";
         const server = gateway(broker, key).listen(0, "127.0.0.1");
         await once(server, "listening");
@@ -384,75 +378,13 @@ for (const kind of ["sqlite", "postgres"] as const) {
               headers: { authorization: `Bearer ${issueCapability(key, owner, id)}` },
               body: "{}",
             });
-            assert.equal(response.status, 403, route);
+            assert.equal(response.status, 501, route);
           }
-          const viaGateway = await fetch(`http://127.0.0.1:${address.port}/tools`, {
-            method: "POST",
-            headers: { authorization: `Bearer ${issueCapability(key, owner, id)}` },
-            body: JSON.stringify({ id: "gw", tool: "bash", args: { command: "pwd" } }),
-          });
-          assert.equal(viaGateway.status, 403);
         } finally {
           await new Promise<void>((r) => server.close(() => r()));
         }
-        c = await read(store, owner, id);
-        assert.ok(!c.receipts["tool:direct"] && !c.receipts["tool:gw"]);
       } finally {
         await engine.stop();
-        await store.close();
-        await rm(dir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  test(
-    `${kind}: remote sandbox: the call that first taints cannot be bash, and unexpected production results taint`,
-    { skip, timeout: 30_000 },
-    async () => {
-      const dir = await mkdtemp(join(tmpdir(), "regress-remote-")),
-        store = await open(dir),
-        owner = `remote-${randomUUID()}`;
-      const dispatched: string[] = [];
-      const provider: SandboxProvider = {
-        kind: "remote",
-        allocate: async () => "remote-sandbox",
-        classify: async (_s, call) =>
-          String(call.args.command ?? call.args.path).includes("prod") ? "production" : "ordinary",
-        execute: async (_s, call) => {
-          dispatched.push(call.id);
-          return { text: "ok", productionData: call.args.path === "sneaky.csv" };
-        },
-      };
-      const broker = new SandboxBroker(store, provider);
-      try {
-        const first = randomUUID(),
-          second = randomUUID();
-        await store.create(initial(first, owner));
-        await store.create(initial(second, owner));
-        // bash classified as production is denied even though it is the tainting call.
-        await assert.rejects(
-          broker.execute(owner, first, {
-            id: "b",
-            tool: "bash",
-            args: { command: "cat prod.csv" },
-          }),
-          (e: unknown) => e instanceof ApiError && e.status === 403,
-        );
-        assert.equal((await read(store, owner, first)).tainted, true);
-        assert.deepEqual(dispatched, []);
-        // An ordinary-classified read that returns production data taints; later bash is denied.
-        await broker.execute(owner, second, {
-          id: "r",
-          tool: "read",
-          args: { path: "sneaky.csv" },
-        });
-        assert.equal((await read(store, owner, second)).tainted, true);
-        await assert.rejects(
-          broker.execute(owner, second, { id: "b2", tool: "bash", args: { command: "ls" } }),
-          (e: unknown) => e instanceof ApiError && e.status === 403,
-        );
-        assert.deepEqual(dispatched, ["r"]);
-      } finally {
         await store.close();
         await rm(dir, { recursive: true, force: true });
       }

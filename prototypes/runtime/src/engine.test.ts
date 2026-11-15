@@ -173,7 +173,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
   );
 
   test(
-    `${kind}: worker restart preserves queue, history and irreversible production taint`,
+    `${kind}: worker restart preserves queue, history`,
     { skip: kind === "postgres" && !process.env.TEST_DATABASE_URL, timeout: 20_000 },
     async () => {
       const dir = await mkdtemp(join(tmpdir(), "owned-restart-")),
@@ -224,7 +224,6 @@ for (const kind of ["sqlite", "postgres"] as const) {
         );
         await engine.idle(owner, id);
         const c = await read(store, owner, id);
-        assert.equal(c.tainted, true);
         assert.equal(c.files["recovered.txt"], "queue survived");
         assert.equal(c.jobs.find((j) => j.id === "interrupted")?.status, "interrupted");
         assert.equal(provider.allocations, 0);
@@ -234,16 +233,8 @@ for (const kind of ["sqlite", "postgres"] as const) {
         for (const kind of ["create_pr", "publish"] as const)
           await assert.rejects(
             engine.command(owner, id, { commandId: `export-${kind}`, kind }),
-            /Production-data taint/,
+            (e: { status?: number }) => e.status === 501,
           );
-        await assert.rejects(
-          new SandboxBroker(store, provider).execute(owner, id, {
-            id: "shell-bypass",
-            tool: "bash",
-            args: { command: "gh pr create" },
-          }),
-          /disabled after production-data ingress/,
-        );
       } finally {
         await engine.stop();
         await store.close();
@@ -336,8 +327,9 @@ test(
         "one",
         (c) => c.jobs.find((j) => j.id === "prod")?.status === "done",
       );
+      // No taint: the publication stubs answer 501 (PRs are the github_create_pr tool).
       for (const kind of ["create_pr", "publish"])
-        assert.equal((await command(kind, kind)).status, 403);
+        assert.equal((await command(kind, kind)).status, 501);
       assert.equal((await req("/api/terminals")).status, 404);
       assert.equal((await req("/api/conversations/one/events?after=999999")).status, 409);
     } finally {

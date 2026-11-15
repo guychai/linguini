@@ -33,7 +33,6 @@ export interface Conversation {
   createdAt?: string;
   updatedAt?: string;
   title: string;
-  tainted: boolean;
   sandboxAllocated: boolean;
   jobs: Job[];
   events: Event[];
@@ -109,10 +108,6 @@ export function mergeEvent(c: Conversation, event: Event): Conversation {
     jobs,
     events: [...c.events, event],
     sandboxAllocated: c.sandboxAllocated || event.type === "sandbox.allocated",
-    tainted:
-      c.tainted ||
-      event.data.productionData === true ||
-      (event.type === "taint.changed" && event.data.tainted === true),
   };
 }
 export function toolLabel(event: Event): string {
@@ -170,7 +165,8 @@ export class OwnedAdapter {
       headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
       body: JSON.stringify(settings),
     });
-    if (!response.ok) throw new OwnedApiError(`Settings not saved (${response.status})`, response.status);
+    if (!response.ok)
+      throw new OwnedApiError(`Settings not saved (${response.status})`, response.status);
     return response.json();
   }
   /** Every conversation, fetched one server page at a time (see X-Next-Cursor). */

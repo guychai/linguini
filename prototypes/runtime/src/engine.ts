@@ -15,7 +15,7 @@ import {
   type Fence,
   type Store,
 } from "./store.ts";
-import { assertPublicationAllowed, fingerprint } from "./sandbox.ts";
+import { fingerprint } from "./sandbox.ts";
 import { assertNotBlocked, reconcileOnAcquire, resolveUnknown, unresolved } from "./ledger.ts";
 import type { Harness, HarnessFactory } from "./harness.ts";
 
@@ -218,12 +218,9 @@ export class Engine {
         return { value: previous.result as { accepted: true; jobId: string | null }, fresh: false };
       }
       if (["create_pr", "publish"].includes(command.kind)) {
-        // Publication is declared egress to a publication destination; an unknown tool
-        // outcome also blocks it, since the workspace state is uncertain.
+        // An unknown tool outcome blocks publication, since the workspace state is uncertain.
         assertNotBlocked(c);
-        assertPublicationAllowed(c);
-        // Not implemented: no PR or publish integration exists yet. Pull requests are planned as a
-        // host-side GitHub App tool (git-via-egress phase 2); this stub keeps the taint checks above.
+        // Not implemented here: pull requests are the agent's github_create_pr host tool.
         throw new ApiError(
           501,
           "Not implemented: pull requests and publishing are not available yet",

@@ -201,7 +201,6 @@ async function rig(t: { after: (f: () => unknown) => void }, kind: "sqlite" | "p
       version: 1,
       conversationKey: key,
       workspaceId: `ws-${key}`,
-      tainted: false,
       rules: [],
     });
     await ports?.share(owner, id, { port: 3000 });

@@ -14,7 +14,6 @@ const conv = (job: Record<string, unknown>, events: ReturnType<typeof ev>[]) =>
     title: "t",
     createdAt: "2026-10-12T10:00:00.000Z",
     updatedAt: "2026-10-12T12:00:00.000Z",
-    tainted: false,
     sandboxAllocated: false,
     jobs: [{ id: "j1", text: "hi", ...job }],
     events,
