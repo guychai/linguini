@@ -33,9 +33,6 @@ g() {
 c() { curl -sS --max-time 10 --proxy "http://127.0.0.1:$PP" --cacert "$CA" "$@" 2>&1 || true; }
 mints() { curl -sS --cacert "$UCA" "https://localhost:$U/_stats" | jq -r '.mints | join(",")'; }
 mkdir -p "$work/home" "$work/c"
-# A private-repo read marks the conversation sensitive (sensitive/<key>); clearing the marker
-# stands in for a fresh conversation where a check needs the non-sensitive behaviour.
-unmark() { rm -f "$work/sensitive/$KEY"; }
 
 # public repository without the App: anonymous clone works
 out=$(g clone -q "$GH/octo/open.git" "$work/c/open" || true)
@@ -47,8 +44,6 @@ check public-clone "$(cat "$work/c/public/README.md" 2>/dev/null)" "repo octo/pu
 # private repository the App is installed on: clone works with a token minted for it alone
 out=$(g clone -q "$GH/octo/private.git" "$work/c/private" || true)
 check private-clone "$(cat "$work/c/private/README.md" 2>/dev/null)" "repo octo/private"
-check private-marks-sensitive "$(test -f "$work/sensitive/$KEY" && jq -r .reason "$work/sensitive/$KEY")" "private-repo"
-check private-marked-audit "$(jq -r 'select(.repo=="octo/private" and .sensitive_marked==true) | .repo' "$A" | sort -u)" "octo/private"
 check private-clone-no-dotgit "$(g ls-remote "$GH/octo/private" HEAD | awk '{print $2}')" "HEAD"
 # minted once per repository, then cached (public got its own token; a token never spans repos)
 before=$(mints)
@@ -59,14 +54,9 @@ case ",$before," in *",private,"*) pass mint-per-repo "$before";; *) fail mint-p
 # protocol v0 too (info/refs + upload-pack without Git-Protocol)
 out=$(g -c protocol.version=0 ls-remote "$GH/octo/private.git" main | awk '{print $2}')
 check private-protocol-v0 "$out" "refs/heads/main"
-# while sensitive: installed private repos only; public, uninstalled and non-repo GitHub refused
-check sensitive-private-ok "$(g ls-remote "$GH/octo/private.git" main | awk '{print $2}')" "refs/heads/main"
-out=$(g ls-remote "$GH/octo/public.git" || true)
-has sensitive-public-refused "$out" "has read sensitive data"
-check sensitive-open-refused "$(c -o /dev/null -w '%{http_code}' "https://api.github.com:$U/repos/octo/open/auth-echo")" "403"
-check sensitive-non-repo-refused "$(c -o /dev/null -w '%{http_code}' "https://api.github.com:$U/user")" "403"
-check sensitive-audit "$(jq -r 'select(.reason=="sensitive-github") | .decision' "$A" | sort -u)" "deny"
-unmark
+# taintless: after a private-repo read, public repos and other GitHub requests still work
+check after-private-public-ok "$(g ls-remote "$GH/octo/open.git" main | awk '{print $2}')" "refs/heads/main"
+check after-private-api-ok "$(c "https://api.github.com:$U/repos/octo/open/auth-echo" | jq -r .auth)" "none"
 # private repository the App cannot see: a readable error, no password prompt
 out=$(g clone -q "$GH/octo/hidden.git" "$work/c/hidden" || true)
 echo "  (git's output for the hidden repo: $(tr '\n' ' ' <<<"$out"))"
@@ -87,7 +77,6 @@ check push-data-refused "$(c -o /dev/null -w '%{http_code}' -X POST --data x "$G
 check push-not-in-mock "$(g ls-remote "$GH/octo/private.git" | grep -c linguini/ || true)" "0"
 # REST API: repo-scoped Bearer token for the installed repo; anonymous elsewhere
 check api-app-token "$(c "https://api.github.com:$U/repos/octo/private/auth-echo" | jq -r .auth)" "app:octo/private"
-unmark
 check api-public-installed "$(c "https://api.github.com:$U/repos/octo/public/auth-echo" | jq -r .auth)" "app:octo/public"
 check api-public-anonymous "$(c "https://api.github.com:$U/repos/octo/open/auth-echo" | jq -r .auth)" "none"
 check api-not-installed "$(c "https://api.github.com:$U/repos/octo/hidden/auth-echo" | jq -r .auth)" "none"
@@ -97,30 +86,16 @@ check api-download-token-scrubbed "$(jq -r .download_url <<<"$out")" "https://ra
 check api-post-denied "$(c -o /dev/null -w '%{http_code}' -X POST --data '{}' "https://api.github.com:$U/repos/octo/private/issues")" "403"
 # raw.githubusercontent.com: token form, private file readable
 check raw-private "$(c "https://raw.githubusercontent.com:$U/octo/private/main/README.md")" "raw octo/private auth=app:octo/private"
-unmark
 # a conversation naming endless repositories cannot use up the App's API rate limit (budget 20 here)
 for i in $(seq 1 25); do out=$(g ls-remote "$GH/octo/nope$i.git" 2>&1 || true); done
 has app-lookup-budget "$out" "too many different GitHub repositories"
 check app-budget-cached-still-works "$(g ls-remote "$GH/octo/private.git" main | awk '{print $2}')" "refs/heads/main"
 # conversation not enabled for the App (owner not in GITHUB_APP_OWNERS): public still works, private explains
-unmark
 "$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --no-github-app
 out=$(g clone -q "$GH/octo/private.git" "$work/c/private-off" || true)
 has app-disabled-message "$out" "not enabled for this account"
 check app-disabled-public "$(g ls-remote "$GH/octo/public.git" main | awk '{print $2}')" "refs/heads/main"
 check app-disabled-api "$(c "https://api.github.com:$U/repos/octo/private/auth-echo" | jq -r .auth)" "none"
-# sensitive conversation without the App: no GitHub at all
-"$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted --no-github-app
-out=$(g ls-remote "$GH/octo/public.git" || true)
-has tainted-no-app-no-github "$out" "403\|denied\|tainted\|Forbidden"
-has tainted-no-app-private "$(c -o /dev/null -w '%{http_code}' "https://api.github.com:$U/repos/octo/private/auth-echo")" "403"
-# sensitive per the backend (policy tainted, no marker) with the App: installed private repos only
-unmark
-"$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted
-check tainted-private-ok "$(c "https://api.github.com:$U/repos/octo/private/auth-echo" | jq -r .auth)" "app:octo/private"
-check tainted-public-installed-refused "$(c -o /dev/null -w '%{http_code}' "https://api.github.com:$U/repos/octo/public/auth-echo")" "403"
-out=$(g ls-remote "$GH/octo/open.git" || true)
-has tainted-public-refused "$out" "has read sensitive data"
 # the App's JWTs were all valid
 check app-jwt-valid "$(curl -sS --cacert "$UCA" "https://localhost:$U/_stats" | jq -r .bad_jwt)" "0"
 # audit: per-conversation repository access recorded; no token, JWT or Basic credential anywhere

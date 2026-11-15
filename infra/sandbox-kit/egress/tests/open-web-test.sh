@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The optional open-web tier (node config open_web_read, off by default): an unlisted host takes
-# GET/HEAD only, no body, tight URL/query caps, no websocket, and never for a tainted (sensitive)
-# conversation. Loopback, no root.   EGRESS_VENV=/path/to/venv bash tests/open-web-test.sh
+# The open-web tier (node config open_web_read, on by default): an unlisted host takes
+# GET/HEAD only, no body, tight URL/query caps, no websocket, within a per-conversation budget.
+# Loopback, no root.   EGRESS_VENV=/path/to/venv bash tests/open-web-test.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 venv="${EGRESS_VENV:-/opt/sandbox-egress/venv}"
@@ -41,9 +41,10 @@ check open-web-raw-ip "$(code "https://127.0.0.1:$U/echo")" "403"
 check open-web-dns "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" open.test)" "rcode=0 answers=127.0.0.1"
 # listed rules still apply as before (cdn.test allows GET/HEAD only)
 check listed-rule-still-wins "$(code -X POST --data x "https://cdn.test:$U/echo")" "403"
-# sensitive (tainted) conversation: no new hosts
-"$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted
-check tainted-no-open-web "$(code "https://open.test:$U/echo")" "403"
-check tainted-reason "$(jq -r 'select(.host=="open.test" and .decision=="deny") | .reason' "$work/audit.jsonl" | sort -u | tr '\n' ' ')" "open-web-body open-web-method query-too-long secret-detected tainted-new-host url-too-long websocket-not-allowed "
+# per-conversation budget (40 requests in this harness): the tier stops, listed hosts keep working
+for i in $(seq 1 45); do last=$(code "https://open.test:$U/echo?i=$i"); done
+check open-web-budget "$last" "403"
+check listed-after-budget "$(code "https://cdn.test:$U/echo")" "200"
+check open-web-reasons "$(jq -r 'select(.host=="open.test" and .decision=="deny") | .reason' "$work/audit.jsonl" | sort -u | tr '\n' ' ')" "budget-requests open-web-body open-web-method query-too-long secret-detected url-too-long websocket-not-allowed "
 echo "=== open-web-test: $passes passed, $fails failed"
 if [ "$fails" = 0 ]; then echo "RESULT PASS"; else echo "RESULT FAIL"; exit 1; fi

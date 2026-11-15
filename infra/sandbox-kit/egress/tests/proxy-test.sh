@@ -109,15 +109,13 @@ check secret-in-body "$(code -X POST --data-binary $'-----BEGIN OPENSSH PRIVATE 
 check clean-body-passes "$(code -X POST --data x "https://cdn.test:$U/octo/repo.git/git-upload-pack")" "501"
 check secret-reason-audited "$(jq -r 'select(.reason=="secret-detected") | .secret_rule' "$work/audit.jsonl" | sort -u | tr '\n' ' ')" "aws-access-key github-token node-secret private-key "
 check secret-not-in-audit "$(grep -c "$FAKE_GH\|AKIAABCDEFGHIJKLMNOP" "$work/audit.jsonl" || true)" "0"
-# open-web tier is off by default: an unlisted host stays denied
+# open-web tier disabled in node config (this harness): an unlisted host stays denied
 check open-web-off "$(code "https://open.test:$U/echo")" "403"
-# taint narrows egress to allowWhenTainted hosts; the trusted side rewrites the policy
-"$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted
-check tainted-blocks-api "$(code "https://api.test:$U/echo")" "403"
-check tainted-keeps-cdn "$(code "https://cdn.test:$U/echo")" "200"
-# allowWhenTainted is ignored on package registries / code hosts and on wildcard rules
-check tainted-blocks-registry-despite-flag "$(code "https://registry.npmjs.org:$U/echo")" "403"
-check tainted-blocks-wildcard-despite-flag "$(code "https://x.wild.test:$U/echo")" "403"
+# package registries take GET/HEAD only, even when a rule grants POST/PUT (no publishing)
+check registry-get "$(code "https://registry.npmjs.org:$U/echo")" "200"
+check registry-post-refused "$(code -X POST --data x "https://registry.npmjs.org:$U/echo")" "403"
+check registry-put-refused "$(code -X PUT --data x "https://registry.npmjs.org:$U/echo")" "403"
+check registry-reason "$(jq -r 'select(.host=="registry.npmjs.org" and .decision=="deny") | .reason' "$work/audit.jsonl" | sort -u | tr '\n' ' ')" "registry-read-only "
 # a source with no mapping gets nothing (the policy belongs to the sandbox's interface/IP)
 rm -f "$work/sources/127.0.0.1"
 check unknown-source "$(code "https://cdn.test:$U/echo")" "403"

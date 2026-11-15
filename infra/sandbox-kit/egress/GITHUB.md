@@ -41,14 +41,10 @@ only for owners listed in `GITHUB_APP_OWNERS` (backend env; Better Auth user ids
 empty by default). The App acts as itself, not as the Linguini user, so every listed owner can read
 every repository the App is installed on.
 
-Sensitive conversations (V1.1c): reading a **private** repository through the App (GitHub says
-`private` when the token is minted; unknown counts as private) marks the conversation sensitive.
-The proxy writes `<sensitive_dir>/<key>` before forwarding, treats the conversation as tainted from
-then on, and the backend (`EGRESS_SENSITIVE_DIR`) sets its stored flag with reason `private-repo`.
-A sensitive conversation (from this marker or from production data) reaches GitHub only for
-installed private repositories with the App's token; public repositories, repositories the App is
-not installed on and any other GitHub request get 403 `sensitive-github` with a message git
-prints. Without the App enabled for the owner, a sensitive conversation gets no GitHub at all.
+No sensitive-thread state (rework R1): reading a private repository changes nothing about what
+the conversation can reach afterwards. Public repositories keep cloning anonymously, installed
+repositories keep using minted tokens, and git push stays refused. Publishing goes only through
+the backend's own publishing App (a separate, backend-only App on selected repositories).
 
 Access log: every GitHub request is a line in the proxy's audit log with `sandbox` (the
 conversation key), `repo`, `git_service`, `github` (`app` or `anonymous`) and `github_reason`

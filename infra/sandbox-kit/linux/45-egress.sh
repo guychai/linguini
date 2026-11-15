@@ -61,8 +61,6 @@ id -nG "$BACKEND_USER" | grep -qw sandbox-egress || sudo usermod -aG sandbox-egr
 sudo install -d -m 0750 -o root -g sandbox-egress "$ETC" "$ETC/secrets"
 sudo install -d -m 0750 -o sandbox-egress -g sandbox-egress /var/lib/sandbox-egress /var/log/sandbox-egress
 sudo install -d -m 0700 -o sandbox-egress -g sandbox-egress "$CA_DIR"
-# Private-repo reads mark a conversation sensitive here (persistent); the backend reads it via the group.
-sudo install -d -m 2750 -o sandbox-egress -g sandbox-egress /var/lib/sandbox-egress/sensitive
 printf 'd %s 0755 root root -\nd %s/sources 0755 root root -\nd %s/policies 2750 %s sandbox-egress -\n' "$RUN" "$RUN" "$RUN" "$BACKEND_USER" | sudo tee /etc/tmpfiles.d/sandbox-egress.conf >/dev/null
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/sandbox-egress.conf
 [ -e "$ETC/config.json" ] || jq '.audit_log = "/var/log/sandbox-egress/audit.jsonl"' "$EG/config.example.json" | KIT_DEST="$ETC/config.json" sudo_install_stdin -m 0640 -o root -g sandbox-egress
@@ -147,8 +145,8 @@ dk network create --driver bridge --subnet "$SUBNET" --gateway "$GW" \
   -o com.docker.network.bridge.enable_ip_masquerade=false \
   -o com.docker.network.bridge.enable_icc=false "$NET" >/dev/null && pass sandbox-network "$NET $SUBNET (bridge $NET, masquerade off, icc off)"
 sudo env STATE_DIR="$RUN" "$OPT/node/sandbox-net.sh" add "$NET" "$IP" "$KEY"
-# The policy the backend would write (FileEgressPolicyWriter): one allowlisted host, untainted.
-jq -n --arg k "$KEY" '{version: 1, conversationKey: $k, workspaceId: "kit", tainted: false,
+# The policy the backend would write (FileEgressPolicyWriter): one allowlisted host.
+jq -n --arg k "$KEY" '{version: 1, conversationKey: $k, workspaceId: "kit",
   rules: [{host: "dl-cdn.alpinelinux.org", ports: [443], methods: ["GET", "HEAD"]}]}' \
   | KIT_DEST="$RUN/policies/$KEY.json" sudo_install_stdin -m 0640 -o "$BACKEND_USER" -g sandbox-egress
 dk pull -q "$KIT_ALPINE_IMAGE" >/dev/null
@@ -168,14 +166,20 @@ issuer=$(gx 'curl -sS -o /dev/null -w "%{certs}" https://dl-cdn.alpinelinux.org/
 echo "$issuer" | grep -qi mitmproxy && pass mitm "guest sees the node CA as issuer ($issuer)" || fail mitm "issuer: $issuer"
 c() { gx "curl -s -o /dev/null -w '%{http_code}' --max-time 6 $1 || true"; }
 # (example.com does not resolve for the guest; pin it to its address to reach the proxy's TLS check)
-r=$(c "--resolve example.com:443:93.184.215.14 https://example.com/"); [ "$r" = 403 ] && pass denied-host "example.com: 403 from the transparent proxy" || fail denied-host "$r"
+# (an unlisted host may take GET/HEAD on the open-web tier, on by default; a POST is refused either way)
+r=$(c "-X POST --data x --resolve example.com:443:93.184.215.14 https://example.com/"); [ "$r" = 403 ] && pass denied-host "POST to unlisted example.com: 403 from the transparent proxy" || fail denied-host "$r"
+OPEN_WEB=$(sudo jq -r '.open_web_read.enabled // true' "$ETC/config.json" 2>/dev/null || echo true)
 t0=$(date +%s%N); r=$(c https://1.1.1.1:8443/); ms=$(( ($(date +%s%N) - t0) / 1000000 ))
 [ "$r" = 000 ] && [ "$ms" -lt 2000 ] && pass no-direct-route "1.1.1.1:8443 rejected in ${ms}ms (no route around the proxy)" || fail no-direct-route "$r ${ms}ms"
 r=$(c http://169.254.169.254/latest/meta-data/); [ "$r" = 403 ] && pass no-metadata "metadata (port 80) refused by the transparent proxy" || fail no-metadata "$r"
 t0=$(date +%s%N); r=$(c "--proxy http://$GW:$OLDPORT https://dl-cdn.alpinelinux.org/alpine/"); ms=$(( ($(date +%s%N) - t0) / 1000000 ))
 [ "$r" = 000 ] && [ "$ms" -lt 2000 ] && pass old-proxy-port-closed "explicit proxy $GW:$OLDPORT refused in ${ms}ms" || fail old-proxy-port-closed "$r ${ms}ms"
 r=$(gx 'nslookup -timeout=3 dl-cdn.alpinelinux.org 8.8.8.8 | grep -c "^Address" || true'); [ "${r:-0}" -ge 2 ] && pass dns-forced-allowed "query to 8.8.8.8 answered by the proxy DNS" || fail dns-forced-allowed "$r"
-r=$(gx 'nslookup -timeout=3 exfil.example.com 8.8.8.8 >/dev/null 2>&1 && echo answered || echo refused'); [ "$r" = refused ] && pass dns-forced-denied "non-allowlisted name refused" || fail dns-forced-denied "$r"
+if [ "$OPEN_WEB" = false ]; then
+  r=$(gx 'nslookup -timeout=3 exfil.example.com 8.8.8.8 >/dev/null 2>&1 && echo answered || echo refused'); [ "$r" = refused ] && pass dns-forced-denied "non-allowlisted name refused" || fail dns-forced-denied "$r"
+else
+  info dns-forced-denied "skipped: the open-web tier is on, so the proxy DNS answers unlisted names (GET/HEAD only, budgeted)"
+fi
 r=$(gx 'env | grep -ciE "token|secret|authorization" || true'); [ "$r" = 0 ] && pass guest-env "no token/secret variables in the guest" || fail guest-env "$r matching variables"
 # The broker's path: sandbox-netctl (as the backend user, via the sudoers rule) creates the
 # per-conversation network and binds it to the proxy; release undoes both.

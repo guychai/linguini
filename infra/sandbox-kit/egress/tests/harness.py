@@ -7,7 +7,7 @@
       D/state.json when ready and serves until killed.
   dns-query SERVER PORT NAME [QTYPE] prints the rcode and A answers (QTYPE 28 = AAAA)
   tcp-probe PROXY_HOST PROXY_PORT HOST PORT   CONNECT, send a non-HTTP line, print what came back
-  policy --dir D --key KEY [--tainted] [--no-github-app]   rewrite one sandbox policy (trusted-host side)
+  policy --dir D --key KEY [--no-github-app]   rewrite one sandbox policy (trusted-host side)
 
 GitHub (github-test.sh): github.com, api.github.com and raw.githubusercontent.com resolve to the
 same upstream, which plays GitHub: git smart HTTP via `git http-backend` over bare repos in
@@ -344,10 +344,10 @@ def serve_tcp(port_holder):
             c.close()
 
 
-def write_policy(d, key, tainted, https_port, tcp_port, only=None, github_app=True):
+def write_policy(d, key, https_port, tcp_port, only=None, github_app=True):
     rules = [
         {"host": "api.test", "ports": [https_port, tcp_port], "inject": "testsvc", "websocket": True},
-        {"host": "cdn.test", "ports": [https_port], "allowWhenTainted": True, "methods": ["GET", "HEAD"]},
+        {"host": "cdn.test", "ports": [https_port], "methods": ["GET", "HEAD"]},
         # A second rule for the same host: POST only on git fetch paths.
         {"host": "cdn.test", "ports": [https_port], "methods": ["POST"],
          "paths": ["/*/*/git-upload-pack", "/*/*.git/git-upload-pack"]},
@@ -366,9 +366,9 @@ def write_policy(d, key, tainted, https_port, tcp_port, only=None, github_app=Tr
          "paths": ["/*/*/git-upload-pack", "/*/*.git/git-upload-pack"]},
         {"host": "api.github.com", "ports": [https_port], "methods": ["GET", "HEAD"]},
         {"host": "raw.githubusercontent.com", "ports": [https_port], "methods": ["GET", "HEAD"]},
-        # allowWhenTainted on a package registry and on a wildcard host: the proxy ignores it.
-        {"host": "registry.npmjs.org", "ports": [https_port], "allowWhenTainted": True, "methods": ["GET", "HEAD"]},
-        {"host": "*.wild.test", "ports": [https_port], "allowWhenTainted": True, "methods": ["GET", "HEAD"]},
+        # A package registry whose rule (wrongly) grants POST/PUT: the proxy still admits GET/HEAD only.
+        {"host": "registry.npmjs.org", "ports": [https_port], "methods": ["GET", "HEAD", "POST", "PUT"]},
+        {"host": "*.wild.test", "ports": [https_port], "methods": ["GET", "HEAD"]},
         # A rule that admits the warehouse: the proxy's deny_hosts wins (the backend refuses such
         # rule files at startup; this is the proxy-side backstop).
         {"host": "trino.test", "ports": [https_port], "methods": ["GET", "HEAD", "POST"]},
@@ -376,7 +376,7 @@ def write_policy(d, key, tainted, https_port, tcp_port, only=None, github_app=Tr
     ]
     if only:
         rules = [r for r in rules if r["host"] in only]
-    policy = {"version": 1, "conversationKey": key, "workspaceId": f"ws-{key}", "tainted": tainted, "rules": rules}
+    policy = {"version": 1, "conversationKey": key, "workspaceId": f"ws-{key}", "rules": rules}
     if github_app:
         policy["github"] = {"app": True}
     tmp = f"{d}/policies/{key}.json.tmp"
@@ -415,7 +415,7 @@ def cmd_serve(a):
                                "value_file": f"{d}/secrets/testsvc.token", "hosts": ["api.test", "tp.test"]}}, f)
     config = {
         "policy_dir": f"{d}/policies", "sources_dir": f"{d}/sources", "secrets_file": f"{d}/secrets.json",
-        "audit_log": f"{d}/audit.jsonl", "sensitive_dir": f"{d}/sensitive",
+        "audit_log": f"{d}/audit.jsonl",
         # The warehouse: denied even though a (mistaken) rule below admits trino.test.
         "deny_hosts": ["trino.test", "*.warehouse.test"],
         # Only the test upstream's loopback address; 10.x (rebind.test) stays blocked.
@@ -433,15 +433,19 @@ def cmd_serve(a):
                        "conversation_budget": {"calls": 20, "window_s": 600}},
     }
     if a.open_web:
-        # The open-web tier on the test upstream's port (production: 443 only).
-        config["open_web_read"] = {"enabled": True, "ports": [hp[0]]}
+        # The open-web tier on the test upstream's port (production: 443 only); a small budget so
+        # open-web-test.sh can exhaust it (production: 300 requests / 256 KB / 30 hosts per 10 min).
+        config["open_web_read"] = {"enabled": True, "ports": [hp[0]],
+                                   "budget": {"requests": 40, "url_bytes": 64 * 1024, "hosts": 4, "window_s": 600}}
+    else:
+        config["open_web_read"] = {"enabled": False}  # the tier is on by default; these tests list hosts
     with open(f"{d}/config.json", "w") as f:
         json.dump(config, f)
     for src in a.source or []:
         ip, key = src.split("=", 1)
         with open(f"{d}/sources/{ip}", "w") as f:
             f.write(key)
-        write_policy(d, key, False, hp[0], tp[0])
+        write_policy(d, key, hp[0], tp[0])
     env = dict(os.environ, EGRESS_VENV=a.venv, EGRESS_CONFIG=f"{d}/config.json", EGRESS_EXPLICIT=a.listen,
                EGRESS_DNS=a.dns, EGRESS_TRANSPARENT=a.transparent or f"{a.listen.rsplit(':', 1)[0]}:0",
                EGRESS_CONFDIR=f"{d}/ca", EGRESS_UPSTREAM_CA=f"{d}/upstream-ca.pem")
@@ -482,7 +486,7 @@ def cmd_serve(a):
 
 def cmd_policy(a):
     st = json.load(open(f"{a.dir}/state.json"))
-    write_policy(a.dir, a.key, a.tainted, st["https_port"], st["tcp_port"], a.only, not a.no_github_app)
+    write_policy(a.dir, a.key, st["https_port"], st["tcp_port"], a.only, not a.no_github_app)
 
 
 def cmd_dns(a):
@@ -548,7 +552,6 @@ def main():
     s = sub.add_parser("policy")
     s.add_argument("--dir", required=True)
     s.add_argument("--key", required=True)
-    s.add_argument("--tainted", action="store_true")
     s.add_argument("--only", action="append", help="keep only rules for these hosts")
     s.add_argument("--no-github-app", action="store_true", help="policy without github.app (owner not enabled)")
     s = sub.add_parser("dns-query")

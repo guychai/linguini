@@ -13,19 +13,18 @@ headers, bodies, query strings or secret values.
 
 Request limits (V1.1a): every request's path and query are length-capped (generous for listed
 hosts, tight for the open-web tier); outbound URLs, headers and bodies are scanned for credentials
-(node secrets, minted GitHub tokens, well-known key formats) and refused on a match. The optional
-open-web tier (node config `open_web_read`, off by default) lets an unlisted host take GET/HEAD
-without a body, never for a tainted (sensitive) conversation.
+(node secrets, minted GitHub tokens, well-known key formats) and refused on a match. The
+open-web tier (node config `open_web_read`, on by default) lets an unlisted host take GET/HEAD
+without a body, within a per-conversation budget (requests, URL bytes and distinct hosts per
+window; `open_web_read.budget`).
+
+Taintless (rework R1): no per-conversation sensitivity state. Package registries (npm, Yarn, PyPI,
+Docker Hub) only ever take GET/HEAD, whatever a rule says, so nothing is published from a sandbox.
 
 GitHub (github_app.py): the guest's own credentials never reach GitHub; git push is refused;
 reads of one repository get a token minted for that repository only, when the node has a
 GitHub App configured and the conversation's policy enables it (`github.app`).
-
-Sensitive flag (V1.1c): serving a private repository with an App token makes the conversation
-sensitive. The proxy writes `<sensitive_dir>/<key>` before forwarding, treats the conversation as
-tainted from then on, and the backend picks the marker up and sets its own flag. A sensitive
-conversation reaches GitHub only for installed private repositories (App token), never public
-ones or other GitHub requests.
+Public repositories are read anonymously; installed private ones with the App token.
 """
 
 
@@ -67,27 +66,25 @@ ALWAYS_BLOCKED = [
 GITHUB_API_BUDGET = {"calls": 100, "window_s": 600}
 # How long a DNS answer we gave a sandbox stays a valid transparent destination for that name.
 RESOLVED_TTL = 3600.0
-# allowWhenTainted is ignored on these hosts and all their subdomains, and on wildcard rules: data
-# can ride in the path or query of a GET (api.github.com/repos/<data>/…, registry.npmjs.org/<data>)
-# and the registry, or whoever owns the named package or repository, sees it. Keep in sync with
-# prototypes/runtime/src/egress-rules.ts TAINT_UNSAFE_SUFFIXES (the backend refuses to start with
-# such a rule; this covers rules that reach the policy any other way).
-TAINT_UNSAFE_SUFFIXES = (
-    "github.com", "githubusercontent.com", "ghcr.io",
+# Package registries: GET/HEAD only, whatever a rule's methods say (no publishing from a sandbox).
+# Keep in sync with prototypes/runtime/src/egress-rules.ts REGISTRY_SUFFIXES (the backend refuses
+# to start with a default rule granting other methods there; this covers every other path).
+REGISTRY_SUFFIXES = (
     "npmjs.org", "npmjs.com", "yarnpkg.com",
     "pypi.org", "pythonhosted.org",
     "docker.io", "docker.com",
 )
+REGISTRY_METHODS = ("GET", "HEAD")
 
 
-def taint_exempt(rule: dict) -> bool:
-    """Whether a rule really keeps its host reachable after taint."""
-    if rule.get("allowWhenTainted") is not True:
-        return False
-    host = _norm_host(str(rule.get("host", "")))
-    if not host or "*" in host:
-        return False
-    return not any(host == s or host.endswith("." + s) for s in TAINT_UNSAFE_SUFFIXES)
+def registry_host(host: str) -> bool:
+    host = _norm_host(host)
+    return any(host == s or host.endswith("." + s) for s in REGISTRY_SUFFIXES)
+
+
+# Default open-web budget per conversation and window: requests, URL bytes (path + query) and
+# distinct hosts. Node config: open_web_read.budget = {...}.
+OPEN_WEB_BUDGET = {"requests": 300, "url_bytes": 256 * 1024, "hosts": 30, "window_s": 600}
 
 
 # Length caps on the request target (path + query). Listed hosts: generous (signed download URLs
@@ -218,9 +215,10 @@ class SandboxEgress:
         # transparent mode a connection's original destination must be one of these for its SNI
         # (no fronting an allowed name onto an address the sandbox picked itself).
         self._resolved: dict[tuple[str, str], dict[str, float]] = {}
-        self.open_web = {"enabled": False, "ports": [443], **OPEN_WEB_LIMITS}
+        self.open_web = {"enabled": True, "ports": [443], **OPEN_WEB_LIMITS, "budget": dict(OPEN_WEB_BUDGET)}
         self._secret_values: dict[str, tuple[float, bytes]] = {}
-        self._sensitive_keys: set[str] = set()
+        # conversation key -> deque of (time, host, url bytes) for open-web requests.
+        self._open_web_use: dict[str, collections.deque] = {}
 
     # ---- configuration ----
     def load(self, loader):
@@ -250,9 +248,10 @@ class SandboxEgress:
         self.github = gh.GitHubApp(self.cfg["github_app"]) if self.cfg.get("github_app") else None
         self.github_budget = {**GITHUB_API_BUDGET, **(self.cfg.get("github_app") or {}).get("conversation_budget", {})}
         ow = self.cfg.get("open_web_read") or {}
-        self.open_web = {"enabled": ow.get("enabled") is True, "ports": ow.get("ports", [443]),
+        self.open_web = {"enabled": ow.get("enabled", True) is not False, "ports": ow.get("ports", [443]),
                          "max_url": int(ow.get("max_url", OPEN_WEB_LIMITS["max_url"])),
-                         "max_query": int(ow.get("max_query", OPEN_WEB_LIMITS["max_query"]))}
+                         "max_query": int(ow.get("max_query", OPEN_WEB_LIMITS["max_query"])),
+                         "budget": {**OPEN_WEB_BUDGET, **(ow.get("budget") or {})}}
         self._secret_values: dict[str, tuple[float, bytes]] = {}
 
     def _exact_secrets(self) -> list[bytes]:
@@ -295,37 +294,7 @@ class SandboxEgress:
             return None
         if policy.get("version") != 1 or policy.get("conversationKey") != key:
             return None
-        if not policy.get("tainted") and self._sensitive(key):
-            policy["tainted"] = True  # the proxy saw a private-repo read before the backend did
-            policy["_sensitive_marker"] = True
         return policy
-
-    def _sensitive(self, key: str) -> bool:
-        d = self.cfg.get("sensitive_dir")
-        if d:
-            return os.path.exists(os.path.join(d, key))
-        return key in self._sensitive_keys
-
-    def _mark_sensitive(self, key: str):
-        """Record that this conversation read private data. Raises when it cannot be recorded."""
-        self._sensitive_keys.add(key)
-        d = self.cfg.get("sensitive_dir")
-        if not d:
-            return
-        os.makedirs(d, mode=0o750, exist_ok=True)
-        target = os.path.join(d, key)
-        tmp = f"{target}.{os.getpid()}.tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
-        try:
-            os.write(fd, json.dumps({"reason": "private-repo", "ts": int(time.time())}).encode())
-        finally:
-            os.close(fd)
-        os.replace(tmp, target)
-
-    def _github_sensitive_ok(self, policy: dict) -> bool:
-        """A sensitive conversation may still reach GitHub, for installed private repos only
-        (enforced per request in _github_auth)."""
-        return bool(self.github and (policy.get("github") or {}).get("app") is True)
 
     def _denied_host(self, host: str) -> bool:
         for d in getattr(self, "deny_hosts", []):
@@ -365,10 +334,10 @@ class SandboxEgress:
                 return Decision(False, "port-not-allowed", key, rule)
             if scheme not in rule.get("schemes", ["https"]):
                 return Decision(False, "scheme-not-allowed", key, rule)
-            if policy.get("tainted") and not taint_exempt(rule) and not (
-                    host in gh.GITHUB_HOSTS and self._github_sensitive_ok(policy)):
-                return Decision(False, "tainted", key, rule)
             if method is not None:
+                if registry_host(host) and method.upper() not in REGISTRY_METHODS:
+                    first_miss = first_miss or Decision(False, "registry-read-only", key, rule)
+                    continue
                 methods = rule.get("methods")
                 if methods and method.upper() not in [m.upper() for m in methods]:
                     first_miss = first_miss or Decision(False, "method-not-allowed", key, rule)
@@ -384,10 +353,8 @@ class SandboxEgress:
         if literal:
             return Decision(False, "raw-ip", key)
         # Open-web tier: an unlisted host may take GET/HEAD (no body, tight caps; checked per
-        # request). Never for a tainted (sensitive) conversation: no new hosts there.
+        # request, within the conversation's budget).
         if self.open_web["enabled"] and scheme == "https" and port in self.open_web["ports"]:
-            if policy.get("tainted"):
-                return Decision(False, "tainted-new-host", key)
             if method is not None and method.upper() not in OPEN_WEB_RULE["methods"]:
                 return Decision(False, "open-web-method", key)
             return Decision(True, "open-web", key, OPEN_WEB_RULE, policy)
@@ -512,6 +479,8 @@ class SandboxEgress:
             reason = self._limits(flow, d.rule or {})
         if reason is None:
             reason = self._scan_head(flow, host, d.rule or {})
+        if reason is None and (d.rule or {}).get("_open_web"):
+            reason = self._open_web_budget(d.key or "", host, len(flow.request.path))
         if reason:
             reason, _, secret_rule = reason.partition(":")
             if secret_rule:
@@ -520,29 +489,10 @@ class SandboxEgress:
                        repo=repo.full_name if repo else None, git_service=repo.service if repo else None)
             return self._deny(flow, 403, reason, detail)
         policy = d.policy or {}
-        if host in gh.GITHUB_HOSTS and policy.get("tainted"):
-            # Sensitive: only installed private repositories, with the App's token.
+        injected = self._inject(flow, host, d.rule or {})
+        github = None
+        if host in gh.GITHUB_HOSTS and not injected:
             github = await self._github_auth(flow, host, repo, policy)
-            if not (github.get("github") == "app" and github.get("github_private") is True):
-                why = "sensitive-github"
-                self.audit(**base, sandbox=d.key, decision="deny", reason=why,
-                           repo=repo.full_name if repo else None, git_service=repo.service if repo else None)
-                return self._deny(flow, 403, why, gh.denial_message(repo, why, True) if repo else None)
-            injected = None
-        else:
-            injected = self._inject(flow, host, d.rule or {})
-            github = None
-            if host in gh.GITHUB_HOSTS and not injected:
-                github = await self._github_auth(flow, host, repo, policy)
-            if github and github.get("github") == "app" and github.get("github_private") is not False:
-                # A private (or unknown) repository read through the App: sensitive from now on.
-                try:
-                    self._mark_sensitive(d.key)
-                except OSError:
-                    self.audit(**base, sandbox=d.key, decision="deny", reason="sensitive-mark-failed",
-                               repo=repo.full_name if repo else None)
-                    return self._deny(flow, 503, "sensitive-mark-failed")
-                github["sensitive_marked"] = True
         flow.metadata["egress"] = {**base, "sandbox": d.key, "injected": injected, "websocket": is_ws or None,
                                    "open_web": True if (d.rule or {}).get("_open_web") else None,
                                    "started": time.monotonic(), **(github or {})}
@@ -622,7 +572,6 @@ class SandboxEgress:
             flow.request.headers["authorization"] = gh.auth_header_value(host, res.token)
             out["github"] = "app"
             out["github_cached"] = res.cached
-            out["github_private"] = self.github.is_private(repo.full_name)
         return out
 
     def _inject(self, flow: http.HTTPFlow, host: str, rule: dict) -> str | None:
@@ -654,6 +603,26 @@ class SandboxEgress:
         self.audit(**meta, decision="allow", status=flow.response.status_code,
                    bytes_out=len(flow.request.raw_content or b""), bytes_in=len(flow.response.raw_content or b""),
                    redirect=location, ms=int((time.monotonic() - started) * 1000) if started else None)
+
+    def _open_web_budget(self, key: str, host: str, url_bytes: int) -> str | None:
+        """Per-conversation open-web budget over a sliding window: requests, URL bytes, distinct
+        hosts. Counted only for requests that pass every other check."""
+        b = self.open_web["budget"]
+        now = time.monotonic()
+        q = self._open_web_use.setdefault(key, collections.deque())
+        while q and q[0][0] < now - float(b["window_s"]):
+            q.popleft()
+        if len(q) >= int(b["requests"]):
+            return "budget-requests"
+        if sum(u for _, _, u in q) + url_bytes > int(b["url_bytes"]):
+            return "budget-url-bytes"
+        hosts = {h for _, h, _ in q}
+        if host not in hosts and len(hosts) >= int(b["hosts"]):
+            return "budget-hosts"
+        q.append((now, host, url_bytes))
+        if len(self._open_web_use) > 10_000:
+            self._open_web_use = {k: v for k, v in self._open_web_use.items() if v and v[-1][0] >= now - float(b["window_s"])}
+        return None
 
     def _github_budget(self, key: str) -> bool:
         limit, window = int(self.github_budget["calls"]), float(self.github_budget["window_s"])

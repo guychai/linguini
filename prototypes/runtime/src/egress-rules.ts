@@ -1,21 +1,16 @@
 // Startup validation of egress rules (trusted server config: EGRESS_DEFAULT_RULES_FILE and the
-// per-owner EGRESS_RULES_FILE). The proxy enforces the same rule (sandbox_egress.py
-// TAINT_UNSAFE_SUFFIXES), because node config can set rules too.
+// per-owner EGRESS_RULES_FILE). Taintless model: no rule depends on what a conversation read.
 //
-// `allowWhenTainted` keeps a host reachable after the conversation has read production data. That
-// is only safe for hosts whose request logs nobody outside us can read. A public code host or
-// package registry is not one of them: even with `methods: ["GET"]` and `paths` globs, data can
-// ride in the path or query (`api.github.com/repos/<data>/…`, `registry.npmjs.org/<data>`), and
-// the registry, or whoever owns the named package or repository, sees it. Wildcard hosts are
-// refused too: `*.example.com` admits names nobody reviewed.
+// - Package registries take GET/HEAD only: a rule granting other methods there (publishing from a
+//   sandbox) refuses startup. The proxy enforces the same (sandbox_egress.py REGISTRY_SUFFIXES)
+//   for rules that reach a policy any other way.
+// - `allowWhenTainted` no longer exists: a rule still carrying it refuses startup, so a stale
+//   rules file is fixed rather than silently reinterpreted.
+// - Denied hosts (EGRESS_DENY_HOSTS: the data warehouse, internal services) may never be admitted.
 import type { EgressRule } from "./hands.ts";
 
-/** Hosts (and all their subdomains) that may never be reachable after taint. */
-export const TAINT_UNSAFE_SUFFIXES: readonly string[] = Object.freeze([
-  // GitHub: api, codeload, raw/objects content, gists, release assets.
-  "github.com",
-  "githubusercontent.com",
-  "ghcr.io",
+/** Package registries (and all their subdomains): GET/HEAD only. */
+export const REGISTRY_SUFFIXES: readonly string[] = Object.freeze([
   // npm (and yarn's mirror of it).
   "npmjs.org",
   "npmjs.com",
@@ -27,16 +22,15 @@ export const TAINT_UNSAFE_SUFFIXES: readonly string[] = Object.freeze([
   "docker.io",
   "docker.com",
 ]);
+export const REGISTRY_METHODS: readonly string[] = Object.freeze(["GET", "HEAD"]);
 
 const norm = (host: string) => host.trim().toLowerCase().replace(/\.+$/, "");
 
-/** Why `allowWhenTainted` is refused on this rule host, or null when it is acceptable. */
-export function taintUnsafeReason(host: string): string | null {
-  const h = norm(host);
-  if (!h) return "empty host";
-  if (h.includes("*")) return "wildcard host";
-  const hit = TAINT_UNSAFE_SUFFIXES.find((s) => h === s || h.endsWith(`.${s}`));
-  return hit ? `public code host or package registry (${hit})` : null;
+/** The registry suffix this host falls under (wildcards included), or null. */
+export function registrySuffix(host: string): string | null {
+  const h = norm(host).replace(/^\*\./, "");
+  if (!h) return null;
+  return REGISTRY_SUFFIXES.find((s) => h === s || h.endsWith(`.${s}`)) ?? null;
 }
 
 export class EgressRuleError extends Error {}
@@ -60,8 +54,8 @@ export function ruleCoversHost(ruleHost: string, denied: string): boolean {
 
 /**
  * Throws EgressRuleError naming every offending rule; `source` says where the rules came from.
- * `deniedHosts` (the warehouse, V1.2a) may never be reachable from a
- * sandbox: any rule that admits one of them refuses startup.
+ * `deniedHosts` (EGRESS_DENY_HOSTS) may never be reachable from a sandbox: any rule that admits
+ * one of them refuses startup.
  */
 export function validateEgressRules(
   rules: unknown,
@@ -71,26 +65,30 @@ export function validateEgressRules(
   if (!Array.isArray(rules)) throw new EgressRuleError(`${source}: egress rules must be an array`);
   const problems: string[] = [];
   rules.forEach((rule, i) => {
-    // Only the taint exemption is checked here; other shape errors stay the proxy's to ignore.
+    // Only the safety rules are checked here; other shape errors stay the proxy's to ignore.
     if (!rule || typeof rule !== "object") return;
-    const r = rule as EgressRule;
-    const denied =
-      typeof r.host === "string" ? deniedHosts.find((d) => ruleCoversHost(r.host, d)) : undefined;
+    const r = rule as EgressRule & { allowWhenTainted?: unknown };
+    const host = typeof r.host === "string" ? r.host : "";
+    if ("allowWhenTainted" in r)
+      problems.push(
+        `rule ${i} (${host}): allowWhenTainted was removed (no sensitive-thread state); drop the key`,
+      );
+    const denied = host ? deniedHosts.find((d) => ruleCoversHost(host, d)) : undefined;
     if (denied) {
-      problems.push(`rule ${i} (${r.host}): admits ${denied}, which sandboxes may never reach`);
+      problems.push(`rule ${i} (${host}): admits ${denied}, which sandboxes may never reach`);
       return;
     }
-    if (r.allowWhenTainted === undefined || r.allowWhenTainted === false) return;
-    if (typeof r.host !== "string") {
-      problems.push(`rule ${i}: allowWhenTainted needs a string "host"`);
-      return;
+    const registry = host ? registrySuffix(host) : null;
+    if (registry) {
+      const methods = Array.isArray(r.methods) ? r.methods.map((m) => String(m).toUpperCase()) : [];
+      const extra = methods.length
+        ? methods.filter((m) => !REGISTRY_METHODS.includes(m))
+        : ["(all methods)"];
+      if (extra.length)
+        problems.push(
+          `rule ${i} (${host}): package registry (${registry}) rules may only allow GET/HEAD, not ${extra.join(", ")}`,
+        );
     }
-    if (r.allowWhenTainted !== true) {
-      problems.push(`rule ${i} (${r.host}): allowWhenTainted must be a boolean`);
-      return;
-    }
-    const why = taintUnsafeReason(r.host);
-    if (why) problems.push(`rule ${i} (${r.host}): allowWhenTainted is not allowed on a ${why}`);
   });
   if (problems.length)
     throw new EgressRuleError(

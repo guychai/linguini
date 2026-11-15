@@ -966,8 +966,6 @@ export interface EgressRule {
   /** Name of a node-side secret to inject for this host (the value never leaves the node). */
   inject?: string;
   websocket?: boolean;
-  /** Keep this host reachable after production-data taint (default: no). */
-  allowWhenTainted?: boolean;
 }
 /**
  * GitHub through the egress proxy (infra/sandbox-kit/egress/addon/github_app.py). The proxy always
