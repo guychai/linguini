@@ -2,7 +2,7 @@ import { fromPreview } from "./preview.ts";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import { body } from "./gateway.ts";
+import { body } from "./http-body.ts";
 import { ApiError } from "./store.ts";
 import type { TerminalManager } from "./terminal.ts";
 

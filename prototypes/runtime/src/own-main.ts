@@ -17,7 +17,8 @@ import {
   HandsJobTemplate,
   type EgressRule,
 } from "./hands.ts";
-import { FixtureHarness, PiHarness } from "./harness.ts";
+import { FixtureHarness } from "./harness.ts";
+import { DurableHarness, DurableStore, durableCodemode, durableModels } from "./durable-harness.ts";
 import { sandboxSystemPrompt } from "./sandbox-prompt.ts";
 import { githubAppAccessFromEnv } from "./github.ts";
 import { Engine } from "./engine.ts";
@@ -317,26 +318,49 @@ const broker = new SandboxBroker(store, provider, {
 });
 // Model-facing description of the sandbox; allowed hosts come from the node's default rules.
 const systemPrompt = sandboxSystemPrompt(defaultEgressRules);
-const livePi = process.env.HARNESS_MODE === "pi";
+// The model harness is Pi Durable. HARNESS_MODE=fixture runs the deterministic fixture instead;
+// it is for tests and the browser e2e suite only (no model calls).
+const fixtureMode = process.env.HARNESS_MODE === "fixture";
+if (process.env.HARNESS_MODE && !fixtureMode)
+  throw new Error(`HARNESS_MODE=${process.env.HARNESS_MODE} is not supported (unset or "fixture")`);
+if (!fixtureMode) {
+  // @earendil-works/pi-durable declares engines.node >=22.19.0 (worker threads for code mode).
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major! < 22 || (major === 22 && minor! < 19))
+    throw new Error(`Pi Durable needs Node >= 22.19 (this is ${process.versions.node})`);
+}
 const hostDir = resolve(process.env.PI_HOST_DIR ?? "../../.t3/own/host-control");
+// Durable transcripts: one append-only log per conversation in this database (durable-pg.ts).
+const durablePool = new (await import("pg")).default.Pool({ connectionString: url, max: 8 });
+const durableStore = new DurableStore(durablePool);
+// Code mode is on; PI_DURABLE_CODEMODE=0 is the off switch.
+const codemode = process.env.PI_DURABLE_CODEMODE !== "0";
+let durableModelsCache: ReturnType<typeof durableModels> | undefined;
 // Several workers may share one database: each conversation is owned through a
 // renewable lease with a monotonic epoch, and every write is fenced by it.
 const leaseMs = Number(process.env.OWN_LEASE_MS ?? 30_000);
 const engine = new Engine(
   store,
-  async (owner, id, jobId, fence) =>
-    livePi
-      ? PiHarness.create(
-          broker,
-          owner,
-          id,
-          hostDir,
-          jobId,
-          fence,
-          systemPrompt,
-          users ? effectiveModel(await users.settings(owner), settingsPolicy) : {},
-        )
-      : new FixtureHarness(broker, owner, id, jobId, fence),
+  async (owner, id, jobId, fence) => {
+    if (fixtureMode) return new FixtureHarness(broker, owner, id, jobId, fence);
+    const overrides = users ? effectiveModel(await users.settings(owner), settingsPolicy) : {};
+    return DurableHarness.create({
+      broker,
+      owner,
+      id,
+      jobId,
+      fence,
+      store: durableStore,
+      models: (durableModelsCache ??= durableModels(resolve(hostDir, "pi-config", "auth.json"))),
+      model: {
+        provider: process.env.PI_PROVIDER ?? "anthropic",
+        modelId: overrides.model ?? process.env.PI_MODEL ?? "claude-sonnet-4-5",
+      },
+      thinkingLevel: overrides.thinkingLevel ?? process.env.PI_THINKING_LEVEL,
+      systemPrompt,
+      ...(codemode ? { orchestrators: [durableCodemode()] } : {}),
+    });
+  },
   // Unique per process by default (hostname:port:<random>); see worker-id.ts.
   {
     worker: workerId(),
@@ -445,6 +469,7 @@ const deleter = new ConversationDeleter(
     ...(snapshotBucket ? { snapshots: snapshotBucket } : {}),
     local: async (owner, id) => {
       await engine.forget(owner, id);
+      await durableStore.remove(owner, id);
       terminals?.close(owner, id);
       previewActivity.forget(owner, id);
       fileActivity.forget(owner, id);
@@ -522,7 +547,7 @@ const { server, closeStreams } = api(
 );
 server.listen(Number(process.env.OWN_PORT ?? 43220), process.env.OWN_HOST ?? "127.0.0.1", () =>
   console.log(
-    `Owned backend ready (${livePi ? "live host Pi" : "deterministic harness fixture"}, ${provider.kind}, Postgres)`,
+    `Owned backend ready (${fixtureMode ? "deterministic harness fixture" : `Pi Durable, code mode ${codemode ? "on" : "off"}`}, ${provider.kind}, Postgres)`,
   ),
 );
 let shuttingDown = false;
@@ -537,6 +562,7 @@ const shutdown = async () => {
   deleter.stop();
   await engine.stop();
   await store.close();
+  await durablePool.end();
 };
 process.once("SIGTERM", () => {
   void shutdown();

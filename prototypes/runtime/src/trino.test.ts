@@ -5,10 +5,19 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import pg from "pg";
+import { createModels } from "@earendil-works/pi-ai/models";
+import {
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux";
+import { DurableHarness, DurableStore, durableCodemode } from "./durable-harness.ts";
 import { ruleCoversHost, validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
 import { HostToolRegistry, type HostTool } from "./host-tools.ts";
 import { FixtureSandbox, SandboxBroker } from "./sandbox.ts";
-import { SqliteStore, initial, read } from "./store.ts";
+import { PostgresStore, SqliteStore, initial, read } from "./store.ts";
 import {
   FakeTrino,
   HttpTrinoClient,
@@ -184,3 +193,75 @@ test("egress: rules that admit the warehouse refuse startup", () => {
     1,
   );
 });
+
+test(
+  "Durable: the model calls trino_query as the user; code mode passes the entitlement check",
+  { skip: !process.env.TEST_DATABASE_URL, timeout: 30_000 },
+  async (t) => {
+    const database = process.env.TEST_DATABASE_URL!;
+    const store = await PostgresStore.open(database);
+    const pool = new pg.Pool({ connectionString: database, max: 2 });
+    t.after(async () => {
+      await store.close();
+      await pool.end();
+    });
+    const owner = `alice-${randomUUID()}`,
+      id = randomUUID();
+    await store.create(initial(id, owner));
+    const trino = new FakeTrino(new Set(["alice"]));
+    let entitled = true;
+    const broker = new SandboxBroker(store, new FixtureSandbox(), {
+      hostTools: new HostToolRegistry({
+        trino_query: trinoHostTool({ client: trino, emailOf: async () => "alice@corp.example" }),
+      }),
+      entitled: (_c, tool) => {
+        if (tool === "trino_query" && !entitled)
+          throw Object.assign(new Error(`"trino_query" is not enabled for your account`), {
+            status: 403,
+          });
+      },
+    });
+    const f = fauxProvider({ tokensPerSecond: 100_000 });
+    const models = createModels();
+    models.setProvider(f.provider);
+    let result = "";
+    const turn = async (jobId: string, call: ReturnType<typeof fauxToolCall>) => {
+      f.setResponses([
+        fauxAssistantMessage([call], { stopReason: "toolUse" }),
+        (context) => {
+          const last = context.messages.at(-1) as { content?: Array<{ text?: string }> };
+          result = (last.content ?? []).map((b) => b.text ?? "").join("");
+          return fauxAssistantMessage("done");
+        },
+      ]);
+      const h = await DurableHarness.create({
+        broker,
+        owner,
+        id,
+        jobId,
+        store: new DurableStore(pool),
+        models,
+        model: { provider: "faux", modelId: f.getModel().id },
+        systemPrompt: "test",
+        orchestrators: [durableCodemode()],
+      });
+      try {
+        await h.run("q", "", async () => undefined, new AbortController().signal);
+      } finally {
+        h.dispose();
+      }
+    };
+    await turn("j1", fauxToolCall("trino_query", { sql: "SELECT * FROM demo.customers" }));
+    assert.match(result, /acme\tus-east/);
+    assert.equal(trino.queries.at(-1)!.principal, "alice");
+    entitled = false;
+    await turn(
+      "j2",
+      fauxToolCall("codemode", {
+        code: `try { await tools.trino_query({ sql: "select 1" }); } catch (e) { return "refused: " + e.message; } return "ran";`,
+      }),
+    );
+    assert.match(result, /refused: .*not enabled for your account/);
+    assert.equal(trino.queries.length, 1);
+  },
+);

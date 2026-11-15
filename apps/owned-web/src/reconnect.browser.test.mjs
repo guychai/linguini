@@ -26,6 +26,7 @@ test(
         env: {
           ...process.env,
           DATABASE_URL: database,
+          HARNESS_MODE: "fixture",
           OWNER_TOKENS: JSON.stringify(tokens),
           OWN_PORT: String(port),
           OWN_WEB_DIST: root + "/apps/owned-web/dist",

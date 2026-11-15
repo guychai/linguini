@@ -11,8 +11,8 @@ Upstream: <https://github.com/pingdotgg/t3code>, originally vendored at commit
 `2c7a446e657e705c257db28540819f4c0115b2fc`; the current upstream base is recorded in
 `UPSTREAM` (synced by merge commits). The initial vendor commit preserves
 upstream source and MIT `LICENSE`, plus included third-party licenses and notices.
-Pi is pinned to `@earendil-works/pi-coding-agent@1.1.0`, the Pi distribution used
-by this T3 revision. Prototype additions are covered by the repository MIT license.
+The owned backend's model harness is Pi Durable (`@earendil-works/pi-durable@1.5.2`);
+the Pi coding-agent harness was removed. Prototype additions are covered by the repository MIT license.
 
 These are local prototypes, not a production multitenant service. The full T3
 server is single-owner: use a separate T3 server, state directory and signing key
@@ -101,7 +101,7 @@ served by the backend. `OWN_PORT`, `OWN_BACKEND_URL` (dev proxy only),
 optional JSON token-to-owner binding supplied securely in the environment.
 Tokens must have at least 32 characters. No token appears in startup logs.
 
-The default harness is labelled deterministic. Try `/fixture write hello.txt
+With `HARNESS_MODE=fixture` the harness is labelled deterministic. Try `/fixture write hello.txt
 Hello`, `/fixture read hello.txt`, `/fixture wait` followed by **Steer** or
 **Cancel**, and queued prompts. History and event cursors live in Postgres.
 Retries retain command IDs; reconnect replays events after the last cursor.
@@ -109,15 +109,11 @@ An interrupted running turn is never automatically replayed after a worker
 restart; queued prompts resume. One worker per database is enforced by a
 Postgres advisory lock. This is not horizontal worker orchestration.
 
-`HARNESS_MODE=pi`, `PI_PROVIDER`, `PI_MODEL`, and secure model credentials enable
-real in-process host Pi. Its builtin host tools and discovery are disabled;
-only four registered sandbox tools are callable. Native Pi session headers and
-entries persist in Postgres, preserving roles and tool-call/result IDs. Checkpoints
-are durable before tool dispatch. Restart repairs missing results from confirmed
-receipts or marks them uncertain errors; it never replays uncertain tools. Partial
-cancelled/interrupted text can be recovered as an explicitly aborted entry with
-synthetic zero usage, not as a completed model response. Live model calls remain
-unverified.
+The model harness is Pi Durable 1.5.2 (`PI_PROVIDER`, `PI_MODEL` and secure model
+credentials). Its transcripts are append-only logs in the same Postgres database, fenced by the
+conversation lease; every tool task, nested code-mode calls included, passes the broker's checks
+first, and code mode is on (`PI_DURABLE_CODEMODE=0` turns it off). `HARNESS_MODE=fixture` runs the
+deterministic fixture for tests. See `prototypes/runtime/DESIGN-durable.md`.
 
 The frontend imports `apps/web/src/main.tsx` directly. Its original composer,
 transcript, tool presentation, sidebar, stores and client connection runtime run

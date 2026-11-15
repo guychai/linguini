@@ -22,6 +22,7 @@ test(
         env: {
           ...process.env,
           DATABASE_URL: database!,
+          HARNESS_MODE: "fixture",
           OWNER_TOKENS: JSON.stringify({ [token]: owner }),
           OWN_PORT: "43222",
           // Each process gets a fresh worker ID, so after the SIGKILL below the replacement
