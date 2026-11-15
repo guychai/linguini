@@ -44,6 +44,23 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import pg from "pg";
+import { PostgresLogStorage } from "./durable-pg.ts";
+
+// SPIKE: DURABLE_PG_URL switches DurableStore to the Postgres commit log (one log per conversation).
+let spikePool: Promise<pg.Pool> | undefined;
+const spikePg = () =>
+  process.env.DURABLE_PG_URL
+    ? (spikePool ??= (async () => {
+        const pool = new pg.Pool({
+          connectionString: process.env.DURABLE_PG_URL,
+          allowExitOnIdle: true,
+          idleTimeoutMillis: 500,
+        });
+        await PostgresLogStorage.ensureSchema(pool);
+        return pool;
+      })())
+    : undefined;
 import { CODEMODE_TOOL_NAME, createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { Harness, Sink } from "./harness.ts";
@@ -75,6 +92,20 @@ export class DurableStore {
     const path = this.path(owner, id);
     // A previous turn's harness in this process may still be closing the same file.
     await this.closing.get(path);
+    const pool = await spikePg();
+    if (pool) {
+      const storage = await PostgresLogStorage.open(pool, path);
+      return {
+        storage,
+        track: (closing: Promise<void>) => {
+          const done = closing.finally(() => {
+            if (this.closing.get(path) === done) this.closing.delete(path);
+          });
+          this.closing.set(path, done);
+          return done;
+        },
+      };
+    }
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
     const db = await openNodeSqliteDatabase(path);
     try {
@@ -102,6 +133,8 @@ export class DurableStore {
   async remove(owner: string, id: string) {
     const path = this.path(owner, id);
     await this.closing.get(path);
+    const pool = await spikePg();
+    if (pool) return PostgresLogStorage.remove(pool, path);
     for (const suffix of ["", "-wal", "-shm", "-journal"]) await rm(path + suffix, { force: true });
   }
 }

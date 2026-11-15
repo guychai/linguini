@@ -192,9 +192,20 @@ for (const kind of ["sqlite", "postgres"] as const)
       } finally {
         await engine.stop();
       }
-      await access(durable.path(owner, id));
-      await durable.remove(owner, id);
-      await assert.rejects(access(durable.path(owner, id)));
+      if (process.env.DURABLE_PG_URL) {
+        // SPIKE: the transcript is the Postgres log; deletion empties it.
+        const pool = new (await import("pg")).default.Pool({ connectionString: process.env.DURABLE_PG_URL });
+        const n = async () =>
+          (await pool.query("SELECT count(*)::int n FROM prototype_durable_log WHERE log_key=$1", [durable.path(owner, id)])).rows[0].n;
+        assert.ok((await n()) > 0);
+        await durable.remove(owner, id);
+        assert.equal(await n(), 0);
+        await pool.end();
+      } else {
+        await access(durable.path(owner, id));
+        await durable.remove(owner, id);
+        await assert.rejects(access(durable.path(owner, id)));
+      }
     },
   );
 
