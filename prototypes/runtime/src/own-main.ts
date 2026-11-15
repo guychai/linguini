@@ -476,7 +476,7 @@ const terminals =
     ? new TerminalManager({
         prepare: async (owner, id) => {
           const c = await store.snapshot(owner, id, { events: false });
-          return provider.prepareInteractive(owner, id, c.tainted === true);
+          return provider.prepareInteractive(owner, id, c.tainted === true, c.taintScope);
         },
         connector: new NomadExecConnector(process.env.NOMAD_ADDR ?? "http://127.0.0.1:4646"),
         perConversation: Number(process.env.TERMINALS_PER_CONVERSATION) || 4,
@@ -492,7 +492,7 @@ const files =
     ? new SandboxFiles({
         prepare: async (owner, id) => {
           const c = await store.snapshot(owner, id, { events: false });
-          return provider.prepareInteractive(owner, id, c.tainted === true);
+          return provider.prepareInteractive(owner, id, c.tainted === true, c.taintScope);
         },
         exec: (owner, id, request) => kataHands!.exec(owner, id, request),
         touch: (owner, id) => fileActivity.touch(owner, id),
@@ -522,7 +522,7 @@ const projectArtifacts =
                 },
                 put: async (owner: string, id: string, name: string, content: string) => {
                   const c = await store.snapshot(owner, id, { events: false });
-                  await provider.prepareInteractive(owner, id, c.tainted === true);
+                  await provider.prepareInteractive(owner, id, c.tainted === true, c.taintScope);
                   const r = await kataHands!.exec(owner, id, {
                     execId: `grant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
                     epoch: 0,

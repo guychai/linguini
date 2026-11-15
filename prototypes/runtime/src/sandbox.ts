@@ -19,6 +19,7 @@ import {
   ApiError,
   append,
   assertFence,
+  markSensitive,
   read,
   type Conversation,
   StaleOwnerError,
@@ -97,6 +98,8 @@ export interface ExecuteOptions {
   conversationId?: string;
   /** The conversation's taint, read after any taint for this call committed. */
   tainted?: boolean;
+  /** The narrow "private-repo" sensitivity (store.ts taintScope), for the egress policy. */
+  taintScope?: "private-repo";
 }
 export interface SandboxProvider {
   readonly kind: "deterministic-fixture" | "remote";
@@ -450,10 +453,7 @@ export class SandboxBroker {
       const reason = await this.sensitiveSource(owner, id);
       if (reason) {
         await this.store.mutate(owner, id, (state) => {
-          if (!state.tainted) {
-            state.tainted = true;
-            append(state, "taint.changed", { tainted: true, reason });
-          }
+          markSensitive(state, reason);
         });
         c = await read(this.store, owner, id);
       }
@@ -501,10 +501,7 @@ export class SandboxBroker {
     // Taint commits before dispatch, even for a stale owner: it only ever restricts.
     const taint = async (reason: string) => {
       await this.store.mutate(owner, id, (state) => {
-        if (!state.tainted) {
-          state.tainted = true;
-          append(state, "taint.changed", { tainted: true, reason, callId: call.id });
-        }
+        markSensitive(state, reason, { callId: call.id });
       });
       c = await read(this.store, owner, id);
     };
@@ -616,18 +613,13 @@ export class SandboxBroker {
     policy: ToolPolicy,
     result: ToolResult,
   ) {
-    if ((result.productionData || policy.destination === "production") && !state.tainted) {
-      state.tainted = true;
-      append(state, "taint.changed", {
-        tainted: true,
-        reason: policy.destination === "production" ? "production" : "unexpected-production",
-        callId: call.id,
-      });
-    }
-    if (result.sensitive && !state.tainted) {
-      state.tainted = true;
-      append(state, "taint.changed", { tainted: true, reason: result.sensitive, callId: call.id });
-    }
+    if (result.productionData || policy.destination === "production")
+      markSensitive(
+        state,
+        policy.destination === "production" ? "production" : "unexpected-production",
+        { callId: call.id },
+      );
+    if (result.sensitive) markSensitive(state, result.sensitive, { callId: call.id });
     const kept = persisted(result);
     entry.status = "observed";
     entry.observation = kept;
@@ -771,6 +763,7 @@ export class SandboxBroker {
             owner,
             conversationId: id,
             tainted: current.tainted,
+            ...(current.taintScope ? { taintScope: current.taintScope } : {}),
           });
     } catch (error) {
       // A 4xx from the provider is a definite rejection. Anything else (network, 5xx,
@@ -824,17 +817,8 @@ export class SandboxBroker {
         status: e.status,
       });
       // Taint only ever restricts, so production data in late evidence still taints.
-      if (
-        (result.productionData || result.sensitive || policy.destination === "production") &&
-        !state.tainted
-      ) {
-        state.tainted = true;
-        append(state, "taint.changed", {
-          tainted: true,
-          reason: "late-observation",
-          callId: call.id,
-        });
-      }
+      if (result.productionData || result.sensitive || policy.destination === "production")
+        markSensitive(state, "late-observation", { callId: call.id });
       return false;
     });
     if (!committed) {

@@ -40,6 +40,14 @@ export interface Conversation {
    * (durable-harness.ts). Set once, on the thread's first Durable turn; never changes after.
    */
   harness?: "durable";
+  /**
+   * Narrower sensitivity (Q1 loosening): "private-repo" while every reason the thread turned
+   * sensitive was a private-repository read. The egress proxy then still lets package-registry
+   * GETs through; everything outward stays blocked. Any other reason (production data, unknown
+   * provenance, a sensitive store grant, …) clears it for good. Absent on a sensitive thread:
+   * fully sensitive.
+   */
+  taintScope?: "private-repo";
   /** Project the thread belongs to (V1.4); absent: a private thread outside any project. */
   projectId?: string;
   metadata?: {
@@ -103,6 +111,29 @@ export function initial(id: string, owner: string, title = "New conversation"): 
     lease: null,
     jobs: [],
   };
+}
+/**
+ * Marks the conversation sensitive (it never goes back). A private-repo reason on a clean thread
+ * sets the narrow "private-repo" scope; any other reason makes it fully sensitive, also when it
+ * was already sensitive with the narrow scope. Returns whether anything changed.
+ */
+export function markSensitive(
+  c: Conversation,
+  reason: string,
+  extra: Record<string, unknown> = {},
+): boolean {
+  if (!c.tainted) {
+    c.tainted = true;
+    if (reason === "private-repo") c.taintScope = "private-repo";
+    append(c, "taint.changed", { tainted: true, reason, ...extra });
+    return true;
+  }
+  if (reason !== "private-repo" && c.taintScope) {
+    delete c.taintScope;
+    append(c, "taint.changed", { tainted: true, reason, scope: "full", ...extra });
+    return true;
+  }
+  return false;
 }
 export function append(c: Conversation, type: string, data: Record<string, unknown>): JournalEvent {
   c.updatedAt = new Date().toISOString();
