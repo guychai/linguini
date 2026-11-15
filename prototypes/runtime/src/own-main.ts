@@ -1,3 +1,4 @@
+import { HostToolRegistry, previewHostTools, visualHostTools } from "./host-tools.ts";
 import { EgressLog } from "./egress-log.ts";
 import { readFile } from "node:fs/promises";
 import { validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
@@ -247,16 +248,32 @@ const provider =
             ...(egressWriter
               ? { egress: egressWriter, egressRules: rulesFor, egressGitHub: githubFor }
               : {}),
-            ...(previewTools ? { previewTools } : {}),
-            visualTools: (o: string, i: string, call) => {
-              if (!visual)
-                throw new ApiError(501, "Visual replies are not configured on this server");
-              return visual.execute(o, i, call);
-            },
           },
         )
       : new FixtureSandbox();
-const broker = new SandboxBroker(store, provider);
+// Host tools (host-tools.ts): previews and visual replies run on the backend through the ledger,
+// after the registry's destination check.
+const hostTools = new HostToolRegistry({
+  ...(previewTools
+    ? previewHostTools({
+        tools: previewTools,
+        refreshEnv: async (o, i) => {
+          const b = (await store.snapshot(o, i, { events: false })).hands;
+          if (b?.state === "ready") await installPreviewEnv(o, i, b);
+          return undefined;
+        },
+      })
+    : {}),
+  ...(kataHands
+    ? visualHostTools({
+        execute: (o, i, call) => {
+          if (!visual) throw new ApiError(501, "Visual replies are not configured on this server");
+          return visual.execute(o, i, call);
+        },
+      })
+    : {}),
+});
+const broker = new SandboxBroker(store, provider, { hostTools });
 // Model-facing description of the sandbox; allowed hosts come from the node's default rules.
 const systemPrompt = sandboxSystemPrompt(defaultEgressRules);
 const livePi = process.env.HARNESS_MODE === "pi";
