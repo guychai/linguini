@@ -26,7 +26,6 @@ import {
   type Fence,
   type Store,
 } from "./store.ts";
-import { PREVIEW_INSTALL_SCRIPT } from "./preview.ts";
 import {
   globMatcher,
   sandboxPath,
@@ -1127,20 +1126,8 @@ export class HandsSandbox implements SandboxProvider {
       egressGitHub?: (owner: string, conversationId: string) => EgressGitHub | undefined;
       deadlineMs?: number;
       outputLimitBytes?: number;
-      /**
-       * share_port / unshare_port (control plane, not a sandbox command): records the share and
-       * returns the tool text plus the sandbox's new preview env file (installed by this call).
-       */
-      previewTools?: (
-        owner: string,
-        conversationId: string,
-        call: ToolCall,
-      ) => Promise<{ text: string; envFile: string }>;
-      /**
-       * html_preview / html_render (control plane: rendered by the render worker, images read
-       * from this sandbox through the files API). visual.ts.
-       */
-      visualTools?: (owner: string, conversationId: string, call: ToolCall) => Promise<ToolResult>;
+      // share_port / unshare_port and html_preview / html_render are host tools (host-tools.ts),
+      // run by the broker's registry, not here.
     } = {},
   ) {
     this.egressBoundary = options.egress ? "proxy" : "none";
@@ -1206,23 +1193,8 @@ export class HandsSandbox implements SandboxProvider {
         outputLimitBytes: this.options.outputLimitBytes ?? 256 * 1024,
       });
     const args = call.args;
-    if (call.tool === "html_preview" || call.tool === "html_render") {
-      if (!this.options.visualTools)
-        throw new ApiError(501, "Visual replies are not configured on this server");
-      return this.options.visualTools(owner, conversationId, call);
-    }
-    if (call.tool === "share_port" || call.tool === "unshare_port") {
-      if (!this.options.previewTools)
-        throw new ApiError(501, "Preview ports are not configured on this server");
-      const out = await this.options.previewTools(owner, conversationId, call);
-      const r = await run(["sh", "-c", PREVIEW_INSTALL_SCRIPT], out.envFile);
-      return {
-        text:
-          r.exitCode === 0
-            ? out.text
-            : `${out.text}\n(warning: updating the sandbox preview env failed: ${r.stderr.slice(0, 200)})`,
-      };
-    }
+    if (["html_preview", "html_render", "share_port", "unshare_port"].includes(call.tool))
+      throw new ApiError(501, `${call.tool} is not configured on this server`);
     if (call.tool === "edit") {
       if (typeof args.oldText !== "string" || !args.oldText || typeof args.newText !== "string")
         throw new ApiError(400, "oldText and newText must be strings");

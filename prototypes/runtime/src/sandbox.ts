@@ -25,6 +25,7 @@ import {
   type Fence,
   type Store,
 } from "./store.ts";
+import type { HostToolRegistry } from "./host-tools.ts";
 
 export type ToolName =
   | "read"
@@ -47,6 +48,11 @@ export type LedgerBoundary =
 export interface BrokerOptions {
   /** Declared replay class, destination and egress of every tool. */
   policies?: ToolPolicies;
+  /**
+   * Host tools (host-tools.ts): run on the backend through the ledger, after the registry's
+   * destination and sensitive-boundary check. Their policies join `policies`.
+   */
+  hostTools?: HostToolRegistry;
   /** Test-only fault injection at each ledger boundary. */
   fault?: (
     boundary: LedgerBoundary,
@@ -341,12 +347,17 @@ export class SandboxBroker {
   readonly policies: ToolPolicies;
   readonly policyVersion: string;
   private fault: NonNullable<BrokerOptions["fault"]>;
+  readonly hostTools?: HostToolRegistry;
   constructor(
     readonly store: Store,
     readonly provider: SandboxProvider,
     options: BrokerOptions = {},
   ) {
-    this.policies = options.policies ?? DEFAULT_TOOL_POLICIES;
+    this.hostTools = options.hostTools;
+    this.policies = Object.freeze({
+      ...(options.policies ?? DEFAULT_TOOL_POLICIES),
+      ...options.hostTools?.policies(),
+    });
     this.policyVersion = policyVersion(this.policies);
     this.fault = options.fault ?? (() => undefined);
   }
@@ -456,14 +467,23 @@ export class SandboxBroker {
     // never starts a VM: blocked ledger, egress after taint, and declared provenance.
     assertNotBlocked(c);
     assertEgressAllowed(c, policy, call.tool, boundary);
+    const host = this.hostTools?.has(call.tool) === true;
+    if (host) this.checkHost(c, call);
     const declared = policy.destination === "production" ? "production" : "ordinary";
     const needsClassify =
+      !host &&
       declared === "ordinary" &&
       this.provider.kind === "remote" &&
       this.provider.provenanceSource !== "declared";
     if (declared === "production") await taint("production");
     else if (needsClassify && !this.provider.classify) await taint("unknown");
     assertEgressAllowed(c, policy, call.tool, boundary);
+    // Host tools need no sandbox; the fixture provider runs them like any other provider.
+    if (host) {
+      this.checkHost(c, call);
+      if (signal?.aborted) throw new ApiError(409, "Cancelled before dispatch");
+      return this.dispatch(owner, id, call, policy, signal, fence);
+    }
     if (c.sandbox === null) {
       const allocated = await this.provider.allocate(owner, id);
       await this.store.mutate(owner, id, (state) => {
@@ -512,6 +532,14 @@ export class SandboxBroker {
     });
     await this.fault("after-observation", { execId, tool: call.tool });
     return result;
+  }
+  /** The registry's destination and sensitive-boundary check against this state. */
+  private checkHost(state: Conversation, call: ToolCall) {
+    this.hostTools!.check(call, {
+      owner: state.owner,
+      conversationId: state.id,
+      sensitive: state.tainted === true,
+    });
   }
   private newEntry(state: Conversation, call: ToolCall, policy: ToolPolicy): LedgerEntry {
     const execId = executionId(state.owner, state.id, call.id);
@@ -622,11 +650,14 @@ export class SandboxBroker {
     fence?: Fence,
   ): Promise<ToolResult> {
     const execId = executionId(owner, id, call.id);
+    const host = this.hostTools?.get(call.tool);
     await this.fault("before-intent", { execId, tool: call.tool });
     const intent = await this.store.mutate(owner, id, (state) => {
       assertFence(state, fence);
       assertNotBlocked(state);
       assertEgressAllowed(state, policy, call.tool, this.provider.egressBoundary);
+      // Re-checked in the intent commit: the flag may have been set since the first check.
+      if (host) this.checkHost(state, call);
       let entry = state.ledger?.[execId];
       if (entry && entry.status !== "intent") return structuredClone(entry);
       if (entry) {
@@ -669,14 +700,24 @@ export class SandboxBroker {
     let result: ToolResult;
     try {
       const current = await read(this.store, owner, id);
-      result = await this.provider.execute(current.sandbox!, call, signal, {
-        ...(policy.replay === "idempotent-write" ? { idempotencyKey: execId } : {}),
-        execId,
-        epoch: intent.epoch,
-        owner,
-        conversationId: id,
-        tainted: current.tainted,
-      });
+      result = host
+        ? await host.handler(call, {
+            owner,
+            conversationId: id,
+            sensitive: current.tainted === true,
+            execId,
+            epoch: intent.epoch,
+            ...(policy.replay === "idempotent-write" ? { idempotencyKey: execId } : {}),
+            ...(signal ? { signal } : {}),
+          })
+        : await this.provider.execute(current.sandbox!, call, signal, {
+            ...(policy.replay === "idempotent-write" ? { idempotencyKey: execId } : {}),
+            execId,
+            epoch: intent.epoch,
+            owner,
+            conversationId: id,
+            tainted: current.tainted,
+          });
     } catch (error) {
       // A 4xx from the provider is a definite rejection. Anything else (network, 5xx,
       // abort mid-flight) leaves the effect uncertain.
