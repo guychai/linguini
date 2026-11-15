@@ -54,6 +54,8 @@ import {
 import { append, read } from "./store.ts";
 import { ConversationDeleter } from "./deletion.ts";
 import { AccountAdmin } from "./accounts.ts";
+import { AudienceCheck } from "./audience.ts";
+import { PostgresProjects, ProjectService } from "./projects.ts";
 import { sandboxQuota, type HandsBinding } from "./hands.ts";
 import { PostgresSettings, effectiveModel, settingsPolicyFromEnv } from "./users.ts";
 import { authConfigFromEnv, createAuth } from "./auth.ts";
@@ -81,6 +83,23 @@ const authPool = authMode
 const auth = authPool ? await createAuth(authConfigFromEnv(process.env, authPool)) : undefined;
 const users = authPool ? await PostgresSettings.open(authPool) : undefined;
 const settingsPolicy = settingsPolicyFromEnv();
+// Projects (V1.4a): off unless PROJECTS=1 (needs AUTH_MODE=better-auth). Invites and join links
+// additionally need PROJECT_INVITES=1. Both wait for Nick's OK.
+let projects: ProjectService | undefined;
+if (process.env.PROJECTS === "1") {
+  if (!authPool || !auth) throw new Error("PROJECTS=1 needs AUTH_MODE=better-auth");
+  const audience = new AudienceCheck(store);
+  projects = new ProjectService(await PostgresProjects.open(authPool), {
+    store,
+    audience,
+    invites: process.env.PROJECT_INVITES === "1",
+    lookupUser: async (ref) =>
+      ref.userId ? ((await auth.emailOf(ref.userId)) ? ref.userId : undefined)
+      : ref.email ? auth.userIdByEmail(ref.email)
+      : undefined,
+  });
+  audience.useSource(projects.memberSource());
+}
 // Preview grants (preview.ts) are signed with a key derived from the auth secret.
 const previewGrantKey = auth
   ? createHmac("sha256", process.env.BETTER_AUTH_SECRET!).update("linguini-preview-grant").digest()
@@ -519,11 +538,19 @@ const { server, closeStreams } = api(
             auth,
             settings: users,
             policy: settingsPolicy,
-            accounts: new AccountAdmin(auth.admin, store, deleter, users, (m) => console.log(m)),
+            accounts: new AccountAdmin(
+              auth.admin,
+              store,
+              deleter,
+              users,
+              (m) => console.log(m),
+              async (userId) => projects?.removeUser(userId),
+            ),
             onUser: (u: { id: string }) => owners.add(u.id),
           },
         }
       : {}),
+    ...(projects ? { projects } : {}),
     deleter,
     terminals,
     ...(files ? { files } : {}),

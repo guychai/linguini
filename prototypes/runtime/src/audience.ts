@@ -25,7 +25,7 @@ export const NO_PROJECTS: MemberSource = { members: async () => [] };
 export class AudienceCheck {
   private cache = new Map<string, { members: ReadonlySet<string>; until: number }>();
   private readonly store: Store;
-  private readonly source: MemberSource;
+  private source: MemberSource;
   private readonly ttlMs: number;
   private readonly now: () => number;
   constructor(
@@ -39,6 +39,11 @@ export class AudienceCheck {
     this.now = opts.now ?? (() => Date.now());
   }
 
+  /** Late binding: the project service needs the check, the check needs its members. */
+  useSource(source: MemberSource) {
+    this.source = source;
+    this.cache.clear();
+  }
   /** Project members, cached briefly; membership changes and account deletion invalidate. */
   async resolveMembers(projectId: string): Promise<ReadonlySet<string>> {
     const hit = this.cache.get(projectId);
