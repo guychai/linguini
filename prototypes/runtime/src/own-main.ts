@@ -56,6 +56,7 @@ import { ConversationDeleter } from "./deletion.ts";
 import { AccountAdmin } from "./accounts.ts";
 import { AudienceCheck } from "./audience.ts";
 import { PostgresProjects, ProjectService } from "./projects.ts";
+import { GRANT_SCRIPT, PostgresArtifacts, ProjectArtifacts } from "./project-store.ts";
 import { sandboxQuota, type HandsBinding } from "./hands.ts";
 import { PostgresSettings, effectiveModel, settingsPolicyFromEnv } from "./users.ts";
 import { authConfigFromEnv, createAuth } from "./auth.ts";
@@ -94,9 +95,13 @@ if (process.env.PROJECTS === "1") {
     audience,
     invites: process.env.PROJECT_INVITES === "1",
     lookupUser: async (ref) =>
-      ref.userId ? ((await auth.emailOf(ref.userId)) ? ref.userId : undefined)
-      : ref.email ? auth.userIdByEmail(ref.email)
-      : undefined,
+      ref.userId
+        ? (await auth.emailOf(ref.userId))
+          ? ref.userId
+          : undefined
+        : ref.email
+          ? auth.userIdByEmail(ref.email)
+          : undefined,
   });
   audience.useSource(projects.memberSource());
 }
@@ -461,6 +466,47 @@ const files =
           }),
       })
     : undefined;
+// Project store (V1.5): with projects. Grants copy into /workspace/.project/<name>.
+const projectArtifacts =
+  projects && authPool
+    ? new ProjectArtifacts({
+        store,
+        projects,
+        artifacts: await PostgresArtifacts.open(authPool),
+        ...(files && kataHands && provider instanceof HandsSandbox
+          ? {
+              files: {
+                read: async (owner: string, id: string, path: string) => {
+                  const f = await files.read(owner, id, path);
+                  if (f.binary)
+                    throw new ApiError(415, "Only text files can go in the project store");
+                  if (f.truncated) throw new ApiError(413, "File too large for the project store");
+                  return f.contents;
+                },
+                put: async (owner: string, id: string, name: string, content: string) => {
+                  const c = await store.snapshot(owner, id, { events: false });
+                  await provider.prepareInteractive(owner, id, c.tainted === true);
+                  const r = await kataHands!.exec(owner, id, {
+                    execId: `grant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+                    epoch: 0,
+                    callId: "store:grant",
+                    argv: ["bash", "-c", GRANT_SCRIPT, "linguini-grant", name, "/workspace"],
+                    stdin: content,
+                    deadlineMs: 30_000,
+                    outputLimitBytes: 4096,
+                  });
+                  if (r.exitCode !== 0)
+                    throw new ApiError(502, `Could not copy into the sandbox (exit ${r.exitCode})`);
+                  // Tell Pi on its next turn, like a file the user saved.
+                  await store.mutate(owner, id, (conv) => {
+                    conv.userEdits = recordUserEdit(conv.userEdits, `.project/${name}`);
+                  });
+                },
+              },
+            }
+          : {}),
+      })
+    : undefined;
 // Visual replies (html_preview / html_render, visual.ts). Pages are rendered by the render worker
 // (RENDER_SOCKET: linguini-render.service, its own non-root user, no network); the backend never
 // runs Chromium. RENDER_IN_PROCESS=1 (local single-user dev only) runs it here instead.
@@ -551,6 +597,7 @@ const { server, closeStreams } = api(
         }
       : {}),
     ...(projects ? { projects } : {}),
+    ...(projectArtifacts ? { projectArtifacts } : {}),
     deleter,
     terminals,
     ...(files ? { files } : {}),

@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { body } from "./gateway.ts";
 import { ApiError } from "./store.ts";
 import type { ProjectService } from "./projects.ts";
+import type { ProjectArtifacts } from "./project-store.ts";
 
 const ID = "([A-Za-z0-9_-]{1,100})";
 export async function projectHttp(
@@ -14,10 +15,17 @@ export async function projectHttp(
   request: IncomingMessage,
   url: URL,
   json: (status: number, value: unknown) => void,
+  artifacts?: ProjectArtifacts,
 ): Promise<boolean> {
   const path = url.pathname;
-  if (path !== "/api/projects" && !path.startsWith("/api/projects/")) return false;
   const m = request.method;
+  const grant = new RegExp(`^/api/conversations/${ID}/grants$`).exec(path);
+  if (grant && artifacts) {
+    if (m !== "POST") throw new ApiError(405, "Method not allowed");
+    json(200, await artifacts.grant(owner, grant[1]!, await body(request)));
+    return true;
+  }
+  if (path !== "/api/projects" && !path.startsWith("/api/projects/")) return false;
   // An empty body counts as {} (join links and joins take no required fields).
   const input = async () =>
     request.headers["content-length"] === "0" ||
@@ -51,6 +59,18 @@ export async function projectHttp(
   if ((r = new RegExp(`^/api/projects/${ID}/join-link$`).exec(path))) {
     if (m !== "POST") throw new ApiError(405, "Method not allowed");
     return (json(200, await projects.rotateJoinLink(owner, r[1]!, await input())), true);
+  }
+  const storeRoute = new RegExp(`^/api/projects/${ID}/store(?:/${ID})?$`).exec(path);
+  if (storeRoute) {
+    if (!artifacts) throw new ApiError(404, "Not found");
+    const [, id, artifactId] = storeRoute;
+    if (!artifactId && m === "GET")
+      return (json(200, { artifacts: await artifacts.list(owner, id!) }), true);
+    if (!artifactId && m === "POST")
+      return (json(201, await artifacts.write(owner, id!, await body(request, 4_000_000))), true);
+    if (artifactId && m === "DELETE")
+      return (json(200, await artifacts.remove(owner, id!, artifactId)), true);
+    throw new ApiError(405, "Method not allowed");
   }
   if ((r = new RegExp(`^/api/projects/${ID}/threads$`).exec(path))) {
     if (m !== "GET") throw new ApiError(405, "Method not allowed");
