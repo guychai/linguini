@@ -97,6 +97,10 @@ wildcard host, because a GET can carry data in its path or query (`api.github.co
 `registry.npmjs.org/<data>`) and the registry or the owner of the named package sees it. The broker relaxes
 `egress: "proxied"` tools after taint only when the provider has this boundary
 (`egressBoundary: "proxy"`, i.e. `HandsSandbox` built with an `EgressPolicyWriter`).
+The one exception is GitHub with the App: a sensitive conversation still reads installed
+**private** repositories with a minted token, and nothing else on GitHub. Reading a private
+repository is itself a sensitive source: the proxy records `sensitive_dir/<key>` and taints the
+conversation on its own, before the backend learns of it (`egress/GITHUB.md`).
 
 **Request limits and secret scanning.** Every request is capped on its target (default 8 KiB)
 and query (4 KiB); a rule may set `maxUrl`/`maxQuery` (`url-too-long`, `query-too-long`). The

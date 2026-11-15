@@ -245,6 +245,7 @@ class GitHubApp:
         self._installations: dict[str, tuple[int | None, float]] = {}
         # repo full name -> (token, expires at)
         self._tokens: dict[str, tuple[str, float]] = {}
+        self._private: dict[str, bool] = {}
         # repo full name -> failure remembered until
         self._failures: dict[str, tuple[str, float]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -312,6 +313,10 @@ class GitHubApp:
         fail = self._failures.get(full_name)
         return not (fail and fail[1] > self.clock())
 
+    def is_private(self, full_name: str) -> bool | None:
+        """Whether GitHub said the repository is private when its token was minted (None: unknown)."""
+        return self._private.get(full_name)
+
     def forget(self, full_name: str):
         """Drop a cached token (e.g. GitHub answered 401 with it)."""
         self._tokens.pop(full_name, None)
@@ -373,6 +378,10 @@ class GitHubApp:
             if isinstance(repos, list) and [str(r.get("name", "")).lower() for r in repos] != [repo]:
                 return TokenResult(None, "mint-failed", inst)
             expires = _parse_expiry(data.get("expires_at"), now)
+            if isinstance(repos, list) and repos and isinstance(repos[0].get("private"), bool):
+                self._private[full] = repos[0]["private"]
+            else:
+                self._private.pop(full, None)
             self._tokens[full] = (data["token"], expires)
             self.mints += 1
             return TokenResult(data["token"], "app", inst)
@@ -389,6 +398,11 @@ def denial_message(req: RepoRequest, reason: str, app_enabled: bool) -> str:
     if reason == "push":
         return (f"git push to {repo} is not enabled in this sandbox yet. Clone and fetch work; "
                 "commit locally and tell the user the change is ready instead of pushing.")
+    if reason == "sensitive-github":
+        return (f"{repo}: this conversation has read sensitive data (production data or a private "
+                "repository), so GitHub is limited to private repositories the Linguini GitHub App "
+                "is installed on. Public repositories and other GitHub requests are blocked here; "
+                "start a new conversation for them.")
     if not app_enabled:
         return (f"{repo}: not found, or private. Public repositories clone anonymously; private "
                 "repositories need the Linguini GitHub App, which is not enabled for this account. "

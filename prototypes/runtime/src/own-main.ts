@@ -10,6 +10,7 @@ import {
   CommandNetworkProvisioner,
   FileEgressPolicyWriter,
   HandsSandbox,
+  handsKey,
   NomadHttpApi,
   NomadKataHands,
   NomadCliTransport,
@@ -84,7 +85,7 @@ const egressRules: Record<string, EgressRule[]> = process.env.EGRESS_RULES_FILE
 // created through SANDBOX_NETCTL (default: sudo -n /opt/sandbox-egress/node/sandbox-netctl).
 // Without them NomadKataHands refuses to submit anything.
 const egressWriter = process.env.EGRESS_POLICY_DIR
-  ? new FileEgressPolicyWriter(process.env.EGRESS_POLICY_DIR)
+  ? new FileEgressPolicyWriter(process.env.EGRESS_POLICY_DIR, process.env.EGRESS_SENSITIVE_DIR)
   : undefined;
 // Node-wide default allowlist (e.g. package registries), applied to every conversation before
 // the owner's own rules. Trusted server config only.
@@ -268,7 +269,13 @@ const hostTools = new HostToolRegistry({
       })
     : {}),
 });
-const broker = new SandboxBroker(store, provider, { hostTools });
+// The proxy's private-repo marker (EGRESS_SENSITIVE_DIR) becomes the stored sensitive flag.
+const sensitiveMarked = async (o: string, i: string) =>
+  (await egressWriter?.sensitive(handsKey(o, i))) === true;
+const broker = new SandboxBroker(store, provider, {
+  hostTools,
+  sensitiveSource: async (o, i) => ((await sensitiveMarked(o, i)) ? "private-repo" : undefined),
+});
 // Model-facing description of the sandbox; allowed hosts come from the node's default rules.
 const systemPrompt = sandboxSystemPrompt(defaultEgressRules);
 const livePi = process.env.HARNESS_MODE === "pi";
@@ -451,7 +458,9 @@ const { server, closeStreams } = api(
                 targets: { address: (o, i) => kataHands!.address(o, i) },
                 activity: previewActivity,
                 conversationState: async (o, i) => ({
-                  tainted: (await store.snapshot(o, i, { events: false })).tainted === true,
+                  tainted:
+                    (await store.snapshot(o, i, { events: false })).tainted === true ||
+                    (await sensitiveMarked(o, i)),
                 }),
                 resolveOwner,
                 ...(previewGrantKey ? { grantKey: previewGrantKey } : {}),

@@ -53,6 +53,11 @@ export interface BrokerOptions {
    * destination and sensitive-boundary check. Their policies join `policies`.
    */
   hostTools?: HostToolRegistry;
+  /**
+   * Sensitive sources recorded outside the broker (the egress proxy's private-repo marker).
+   * Checked before every call; a reason sets the stored flag before any policy decision.
+   */
+  sensitiveSource?: (owner: string, id: string) => Promise<string | undefined>;
   /** Test-only fault injection at each ledger boundary. */
   fault?: (
     boundary: LedgerBoundary,
@@ -68,6 +73,8 @@ export interface ToolCall {
 export interface ToolResult {
   text: string;
   productionData?: boolean;
+  /** Set by a provider when the call read a sensitive source (e.g. the proxy saw a private repo). */
+  sensitive?: "private-repo";
   /** Images for the model only (html_preview's screenshot). Never persisted: see persisted(). */
   images?: Array<{ mimeType: string; data: string }>;
 }
@@ -348,12 +355,14 @@ export class SandboxBroker {
   readonly policyVersion: string;
   private fault: NonNullable<BrokerOptions["fault"]>;
   readonly hostTools?: HostToolRegistry;
+  private readonly sensitiveSource?: BrokerOptions["sensitiveSource"];
   constructor(
     readonly store: Store,
     readonly provider: SandboxProvider,
     options: BrokerOptions = {},
   ) {
     this.hostTools = options.hostTools;
+    this.sensitiveSource = options.sensitiveSource;
     this.policies = Object.freeze({
       ...(options.policies ?? DEFAULT_TOOL_POLICIES),
       ...options.hostTools?.policies(),
@@ -465,6 +474,10 @@ export class SandboxBroker {
     };
     // Every policy decision that needs no sandbox runs before allocation, so a refused call
     // never starts a VM: blocked ledger, egress after taint, and declared provenance.
+    if (!c.tainted && this.sensitiveSource) {
+      const reason = await this.sensitiveSource(owner, id);
+      if (reason) await taint(reason);
+    }
     assertNotBlocked(c);
     assertEgressAllowed(c, policy, call.tool, boundary);
     const host = this.hostTools?.has(call.tool) === true;
@@ -573,6 +586,10 @@ export class SandboxBroker {
         reason: policy.destination === "production" ? "production" : "unexpected-production",
         callId: call.id,
       });
+    }
+    if (result.sensitive && !state.tainted) {
+      state.tainted = true;
+      append(state, "taint.changed", { tainted: true, reason: result.sensitive, callId: call.id });
     }
     const kept = persisted(result);
     entry.status = "observed";
@@ -770,7 +787,10 @@ export class SandboxBroker {
         status: e.status,
       });
       // Taint only ever restricts, so production data in late evidence still taints.
-      if ((result.productionData || policy.destination === "production") && !state.tainted) {
+      if (
+        (result.productionData || result.sensitive || policy.destination === "production") &&
+        !state.tainted
+      ) {
         state.tainted = true;
         append(state, "taint.changed", {
           tainted: true,
