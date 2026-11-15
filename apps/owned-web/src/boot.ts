@@ -23,10 +23,10 @@ async function start(token: string) {
     // Projects (V1.4b): only when the server serves them (PROJECTS=1, off by default).
     const projects = new ProjectsClient();
     const projectsOn = await projects.enabled();
-    const token = joinToken(location.pathname);
-    if (token) {
+    const invite = joinToken(location.pathname);
+    if (invite) {
       // A join link: accept it (only signed-in users of this server can), then land on the app.
-      if (projectsOn) await projects.join(token).catch((e) => console.warn("join failed", e));
+      if (projectsOn) await projects.join(invite).catch((e) => console.warn("join failed", e));
       history.replaceState(null, "", "/");
     }
     const openThread = (id: string) =>
