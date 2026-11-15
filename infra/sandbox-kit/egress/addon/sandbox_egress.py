@@ -79,6 +79,27 @@ TAINT_UNSAFE_SUFFIXES = (
     "docker.io", "docker.com",
 )
 
+# Q1 loosening: a conversation that is sensitive only because it read private repositories
+# (policy "taintScope": "private-repo") may still GET/HEAD package registries listed in its rules,
+# so installs keep working. Bodies are refused, the target is capped tighter than a listed host,
+# and the URL/headers are still scanned for credentials. Data could still ride in a package name in
+# the path; that residual risk is the trade-off this rule accepts (see DESIGN-egress.md).
+# Production data (or any other reason) clears the scope: then registries are closed as before.
+REGISTRY_READ_SUFFIXES = (
+    "npmjs.org", "npmjs.com", "yarnpkg.com",
+    "pypi.org", "pythonhosted.org",
+    "docker.io", "docker.com",
+)
+REGISTRY_READ_METHODS = ("GET", "HEAD")
+REGISTRY_READ_LIMITS = {"max_url": 1024, "max_query": 512}
+
+
+def registry_host(host: str) -> bool:
+    return any(host == s or host.endswith("." + s) for s in REGISTRY_READ_SUFFIXES)
+
+
+def private_repo_only(policy: dict) -> bool:
+    return bool(policy.get("tainted")) and policy.get("taintScope") == "private-repo"
 
 def taint_exempt(rule: dict) -> bool:
     """Whether a rule really keeps its host reachable after taint."""
@@ -297,6 +318,7 @@ class SandboxEgress:
             return None
         if not policy.get("tainted") and self._sensitive(key):
             policy["tainted"] = True  # the proxy saw a private-repo read before the backend did
+            policy["taintScope"] = "private-repo"
             policy["_sensitive_marker"] = True
         return policy
 
@@ -365,9 +387,16 @@ class SandboxEgress:
                 return Decision(False, "port-not-allowed", key, rule)
             if scheme not in rule.get("schemes", ["https"]):
                 return Decision(False, "scheme-not-allowed", key, rule)
+            registry_read = False
             if policy.get("tainted") and not taint_exempt(rule) and not (
                     host in gh.GITHUB_HOSTS and self._github_sensitive_ok(policy)):
-                return Decision(False, "tainted", key, rule)
+                if not (private_repo_only(policy) and registry_host(host)):
+                    return Decision(False, "tainted", key, rule)
+                # Private-repo sensitivity: registry reads only (GET/HEAD; capped and scanned).
+                registry_read = True
+                if method is not None and method.upper() not in REGISTRY_READ_METHODS:
+                    first_miss = first_miss or Decision(False, "tainted-registry-method", key, rule)
+                    continue
             if method is not None:
                 methods = rule.get("methods")
                 if methods and method.upper() not in [m.upper() for m in methods]:
@@ -378,6 +407,9 @@ class SandboxEgress:
                     # More specific than a method miss on another rule for this host.
                     first_miss = Decision(False, "path-not-allowed", key, rule)
                     continue
+            if registry_read:
+                return Decision(True, "tainted-registry-read", key,
+                                {**rule, "_registry_read": True, "websocket": False}, policy)
             return Decision(True, "rule", key, rule, policy)
         if first_miss:
             return first_miss
@@ -550,19 +582,21 @@ class SandboxEgress:
     def _limits(self, flow: http.HTTPFlow, rule: dict) -> str | None:
         """Length caps on the request target, and no body on the open-web tier."""
         open_web = rule.get("_open_web") is True
-        lim = self.open_web if open_web else LISTED_LIMITS
-        max_url = int(rule.get("maxUrl", lim["max_url"])) if not open_web else lim["max_url"]
-        max_query = int(rule.get("maxQuery", lim["max_query"])) if not open_web else lim["max_query"]
+        registry_read = rule.get("_registry_read") is True
+        lim = self.open_web if open_web else REGISTRY_READ_LIMITS if registry_read else LISTED_LIMITS
+        fixed = open_web or registry_read  # a rule's own maxUrl/maxQuery can't widen these
+        max_url = lim["max_url"] if fixed else int(rule.get("maxUrl", lim["max_url"]))
+        max_query = lim["max_query"] if fixed else int(rule.get("maxQuery", lim["max_query"]))
         target = flow.request.path
         query = target.split("?", 1)[1] if "?" in target else ""
         if len(target) > max_url:
             return "url-too-long"
         if len(query) > max_query:
             return "query-too-long"
-        if open_web:
+        if open_web or registry_read:
             h = flow.request.headers
             if h.get("transfer-encoding") or int(h.get("content-length", "0") or "0") > 0:
-                return "open-web-body"
+                return "open-web-body" if open_web else "tainted-registry-body"
         return None
 
     def _scan_head(self, flow: http.HTTPFlow, host: str, rule: dict) -> str | None:
