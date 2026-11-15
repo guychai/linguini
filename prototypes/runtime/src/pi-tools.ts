@@ -18,10 +18,9 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   unshare_port: "Stop sharing a previously shared preview port.",
   ...HTML_TOOL_DESCRIPTIONS,
 };
-export function sandboxTools(
-  execute: (call: ToolCall, signal?: AbortSignal) => Promise<ToolResult>,
-): ToolDefinition[] {
-  const schemas = {
+/** Parameter schemas of the sandbox tools, shared by the Pi and Durable harnesses. */
+export function toolSchemas() {
+  return {
     read: Type.Object({
       path: Type.String(),
       offset: Type.Optional(Type.Number()),
@@ -66,6 +65,11 @@ export function sandboxTools(
       height: Type.Number({ description: HTML_PARAM_DESCRIPTIONS.height }),
     }),
   };
+}
+export function sandboxTools(
+  execute: (call: ToolCall, signal?: AbortSignal) => Promise<ToolResult>,
+): ToolDefinition[] {
+  const schemas = toolSchemas();
   return (Object.entries(schemas) as Array<[ToolName, (typeof schemas)[ToolName]]>).map(
     ([name, parameters]) => ({
       name,

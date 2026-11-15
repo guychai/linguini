@@ -119,6 +119,11 @@ cancelled/interrupted text can be recovered as an explicitly aborted entry with
 synthetic zero usage, not as a completed model response. Live model calls remain
 unverified.
 
+`HARNESS_MODE=durable` runs new threads on Pi Durable 1.5.2 instead (older threads keep
+the Pi harness). Its transcripts are per-conversation SQLite files under `PI_DURABLE_DIR`;
+every tool task, nested ones included, passes the broker's policy checks first, and code
+mode is off. See `prototypes/runtime/DESIGN-durable.md`.
+
 The frontend imports `apps/web/src/main.tsx` directly. Its original composer,
 transcript, tool presentation, sidebar, stores and client connection runtime run
 unchanged. Vite substitutes the client runtime's session factory with the owned

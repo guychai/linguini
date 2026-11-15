@@ -427,6 +427,34 @@ export class SandboxBroker {
       return recovered;
     });
   }
+  /**
+   * The policy checks execute() makes before anything runs, with no effect except recording a
+   * sensitive source's taint (which only restricts): known tool, ledger not blocked, egress after
+   * taint, and the host-tool registry's destinations. Harness hooks call it for every tool task,
+   * nested ones included, so a refused call never reaches a tool body. execute() still checks
+   * everything again; this is an earlier gate, not a replacement.
+   */
+  async preflight(owner: string, id: string, tool: string, args: Record<string, unknown>) {
+    if (typeof tool !== "string" || !Object.hasOwn(this.policies, tool))
+      throw new ApiError(400, "Invalid tool call");
+    const policy = this.policy(tool);
+    let c = await read(this.store, owner, id);
+    if (!c.tainted && this.sensitiveSource) {
+      const reason = await this.sensitiveSource(owner, id);
+      if (reason) {
+        await this.store.mutate(owner, id, (state) => {
+          if (!state.tainted) {
+            state.tainted = true;
+            append(state, "taint.changed", { tainted: true, reason });
+          }
+        });
+        c = await read(this.store, owner, id);
+      }
+    }
+    assertNotBlocked(c);
+    assertEgressAllowed(c, policy, tool, this.provider.egressBoundary ?? "none");
+    if (this.hostTools?.has(tool)) this.checkHost(c, { id: "preflight", tool, args });
+  }
   private policy(tool: string): ToolPolicy {
     const policy = this.policies[tool];
     if (!policy) throw new ApiError(400, "Invalid tool call");
