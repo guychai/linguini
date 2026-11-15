@@ -6,6 +6,8 @@
 export interface UiFlags {
   /** A single implicit workspace: hide project names, pickers and breadcrumbs. */
   readonly hideProjects?: boolean;
+  /** With hideProjects: still label sidebar rows of these projects with the project's name. */
+  readonly showProjectLabel?: (projectId: string) => boolean;
   /** No Git checkout behind threads: hide branch/worktree controls. */
   readonly hideGit?: boolean;
   /** Hide the thread details card (environment, Open in editor, project scripts, Commit, Changes) and its header toggle. */

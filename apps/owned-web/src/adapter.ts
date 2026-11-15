@@ -33,6 +33,8 @@ export interface Conversation {
   createdAt?: string;
   updatedAt?: string;
   title: string;
+  /** The Linguini project the thread belongs to (null: a personal thread). */
+  projectId?: string | null;
   sandboxAllocated: boolean;
   jobs: Job[];
   events: Event[];
@@ -184,8 +186,10 @@ export class OwnedAdapter {
     } while (cursor !== null);
     return all;
   }
-  async create(id: string, title: string) {
-    return (await (await this.request("/api/conversations", { id, title })).json()) as Conversation;
+  async create(id: string, title: string, projectId?: string) {
+    return (await (
+      await this.request("/api/conversations", { id, title, ...(projectId ? { projectId } : {}) })
+    ).json()) as Conversation;
   }
   /** Shared preview ports of a conversation (empty when previews are not configured). */
   async previews(id: string): Promise<PreviewPort[]> {

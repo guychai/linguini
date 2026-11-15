@@ -2,11 +2,12 @@ import "./client-header.ts";
 import "./styles.css";
 // Authentication is the only owned screen. Everything after this is upstream T3.
 import { OwnedAdapter } from "./adapter.ts";
-import { configureOwner } from "./projection.ts";
+import { configureOwner, configureProjects, descriptor } from "./projection.ts";
 import { installHttpAdapter } from "./t3-adapter.ts";
 import { installRandomUUIDPolyfill } from "./insecure-context.ts";
 import { installUiFlags, setSettingsExtensions, setSignedInUser } from "./ui-flags.ts";
 import { accountExtensions } from "./account-admin.ts";
+import { joinToken, mountProjects, ProjectsClient } from "./projects-panel.ts";
 import { fetchAuthConfig, showSignIn, signOut } from "./sign-in.ts";
 import { installAccountStorage } from "./account-storage.ts";
 installRandomUUIDPolyfill();
@@ -19,7 +20,30 @@ async function start(token: string) {
   setSignedInUser(user ?? null, () => void signOut());
   // Better Auth accounts: browser storage scoped to the user, theme loaded from the account.
   if (user) {
-    setSettingsExtensions(accountExtensions(user));
+    // Projects: served with Better Auth accounts. A /join/<token> link is accepted first.
+    const projects = new ProjectsClient();
+    const invite = joinToken(location.pathname);
+    if (invite) {
+      await projects.join(invite).catch((e) => console.warn("join failed", e));
+      history.replaceState(null, "", "/");
+    }
+    const mine = await projects.list().catch(() => null);
+    if (mine) configureProjects(mine);
+    const openThread = (id: string) =>
+      location.assign(`/${encodeURIComponent(descriptor.environmentId)}/${encodeURIComponent(id)}`);
+    setSettingsExtensions([
+      ...accountExtensions(user),
+      ...(mine
+        ? [
+            {
+              id: "projects",
+              title: "Projects",
+              mount: (e: HTMLElement) =>
+                mountProjects(e, { me: user, openThread, onProjects: configureProjects }),
+            },
+          ]
+        : []),
+    ]);
     const adapter = new OwnedAdapter(token);
     await installAccountStorage(user.id, {
       get: () => adapter.mySettings(),

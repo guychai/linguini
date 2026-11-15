@@ -46,6 +46,10 @@ import {
 import { append } from "./store.ts";
 import { ConversationDeleter } from "./deletion.ts";
 import { AccountAdmin } from "./accounts.ts";
+import { AudienceCheck } from "./audience.ts";
+import { PostgresProjects, ProjectService } from "./projects.ts";
+import { GRANT_SCRIPT, PostgresArtifacts, ProjectArtifacts } from "./project-store.ts";
+import { SharedThreads } from "./shared-threads.ts";
 import { Entitlements, PostgresRules } from "./entitlements.ts";
 import { sandboxQuota, type HandsBinding } from "./hands.ts";
 import { PostgresSettings, effectiveModel, settingsPolicyFromEnv } from "./users.ts";
@@ -93,6 +97,36 @@ if (authPool && process.env.ENTITLEMENTS !== "0") {
     console.log(`entitlements: seeded ${entitlements.adminRules().length} admin rules`);
   entitlements.start();
 }
+// Projects (projects.ts): on with AUTH_MODE=better-auth (no flag). Members read each other's
+// project threads (shared-threads.ts) and open their shared previews; entitled tools' output is
+// hidden from members without the entitlement.
+let projects: ProjectService | undefined;
+let audience: AudienceCheck | undefined;
+if (authPool && auth) {
+  audience = new AudienceCheck(store);
+  projects = new ProjectService(await PostgresProjects.open(authPool), {
+    store,
+    audience,
+    lookupUser: async (ref) =>
+      ref.userId
+        ? (await auth.emailOf(ref.userId))
+          ? ref.userId
+          : undefined
+        : ref.email
+          ? auth.userIdByEmail(ref.email)
+          : undefined,
+  });
+  audience.useSource(projects.memberSource());
+}
+const sharedThreads = audience
+  ? new SharedThreads({
+      store,
+      audience,
+      // Entitlements off: everyone may use (and so see) every tool.
+      canSee: (viewer, tool, projectId) =>
+        !entitlements || entitlements.allowed(viewer, { type: "tool", name: tool }, projectId),
+    })
+  : undefined;
 // Preview grants (preview.ts) are signed with a key derived from the auth secret.
 const previewGrantKey = auth
   ? createHmac("sha256", process.env.BETTER_AUTH_SECRET!).update("linguini-preview-grant").digest()
@@ -346,7 +380,10 @@ const hostTools = new HostToolRegistry({
 });
 const broker = new SandboxBroker(store, provider, {
   hostTools,
-  ...(entitlements ? { entitled: (c, tool) => entitlements!.assertTool(c.owner, tool) } : {}),
+  // Project threads are checked against the project's rules too.
+  ...(entitlements
+    ? { entitled: (c, tool) => entitlements!.assertTool(c.owner, tool, c.projectId) }
+    : {}),
 });
 // Model-facing description of the sandbox; allowed hosts come from the node's default rules.
 const systemPrompt = sandboxSystemPrompt(defaultEgressRules);
@@ -447,6 +484,46 @@ const files =
           }),
       })
     : undefined;
+// Project store: with projects. Grants copy into /workspace/.project/<name>.
+const projectArtifacts =
+  projects && authPool
+    ? new ProjectArtifacts({
+        store,
+        projects,
+        artifacts: await PostgresArtifacts.open(authPool),
+        ...(files && kataHands && provider instanceof HandsSandbox
+          ? {
+              files: {
+                read: async (owner: string, id: string, path: string) => {
+                  const f = await files.read(owner, id, path);
+                  if (f.binary)
+                    throw new ApiError(415, "Only text files can go in the project store");
+                  if (f.truncated) throw new ApiError(413, "File too large for the project store");
+                  return f.contents;
+                },
+                put: async (owner: string, id: string, name: string, content: string) => {
+                  await provider.prepareInteractive(owner, id);
+                  const r = await kataHands!.exec(owner, id, {
+                    execId: `grant-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+                    epoch: 0,
+                    callId: "store:grant",
+                    argv: ["bash", "-c", GRANT_SCRIPT, "linguini-grant", name, "/workspace"],
+                    stdin: content,
+                    deadlineMs: 30_000,
+                    outputLimitBytes: 4096,
+                  });
+                  if (r.exitCode !== 0)
+                    throw new ApiError(502, `Could not copy into the sandbox (exit ${r.exitCode})`);
+                  // Tell the agent on its next turn, like a file the user saved.
+                  await store.mutate(owner, id, (conv) => {
+                    conv.userEdits = recordUserEdit(conv.userEdits, `.project/${name}`);
+                  });
+                },
+              },
+            }
+          : {}),
+      })
+    : undefined;
 // Visual replies (html_preview / html_render, visual.ts). Pages are rendered by the render worker
 // (RENDER_SOCKET: linguini-render.service, its own non-root user, no network); the backend never
 // runs Chromium. RENDER_IN_PROCESS=1 (local single-user dev only) runs it here instead.
@@ -531,6 +608,7 @@ const { server, closeStreams } = api(
               users,
               (m) => console.log(m),
               async (userId) => {
+                await projects?.removeUser(userId);
                 await entitlements?.removeUser(userId);
               },
             ),
@@ -542,6 +620,9 @@ const { server, closeStreams } = api(
         }
       : {}),
     ...(entitlements ? { entitlements } : {}),
+    ...(projects ? { projects } : {}),
+    ...(projectArtifacts ? { projectArtifacts } : {}),
+    ...(sharedThreads ? { sharedThreads } : {}),
     deleter,
     terminals,
     ...(files ? { files } : {}),
@@ -562,6 +643,13 @@ const { server, closeStreams } = api(
                 activity: previewActivity,
                 conversationExists: (o, i) => store.snapshot(o, i, { events: false }),
                 resolveOwner,
+                // Signed-in project members open each other's shared previews.
+                ...(sharedThreads
+                  ? {
+                      memberAccess: (viewer: string, id: string, owner: string) =>
+                        sharedThreads.allowed(viewer, owner, id),
+                    }
+                  : {}),
                 ...(previewGrantKey ? { grantKey: previewGrantKey } : {}),
               }),
             // The user's toggle in the UI: same record as the agent's tool, env file refreshed

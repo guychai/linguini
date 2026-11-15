@@ -42,6 +42,7 @@ import {
   shell,
   scopes,
   configureHarness,
+  linguiniProjectId,
 } from "./projection.ts";
 import { renderAssetUrl } from "./render-assets.ts";
 
@@ -165,8 +166,11 @@ export async function invoke(tag: string, raw: unknown): Promise<unknown> {
     };
   }
   if (tag === "orchestration.launchThread") {
+    // Personal threads, or threads in one of the user's Linguini projects (the backend checks
+    // the editor/owner role).
+    const projectId = linguiniProjectId(input.projectId);
     if (
-      input.projectId !== "owned-project" ||
+      projectId === undefined ||
       input.workspaceStrategy?.type !== "root" ||
       input.importedNativeThread ||
       input.modelSelection?.instanceId !== "pi" ||
@@ -175,7 +179,7 @@ export async function invoke(tag: string, raw: unknown): Promise<unknown> {
     )
       throw new Error("Unsupported launch outside the owned conversation boundary");
     const id = String(input.threadId ?? `thread-${input.commandId}`);
-    await a.create(id, input.title);
+    await a.create(id, input.title, projectId ?? undefined);
     if (input.initialMessage?.text)
       await a.command(id, {
         commandId: input.commandId,
