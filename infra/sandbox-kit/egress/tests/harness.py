@@ -211,7 +211,7 @@ class Upstream(BaseHTTPRequestHandler):
                     GH.tokens[tok] = f"octo/{repos[0]}"
                     GH.mints.append(repos[0])
                 exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                return self._json(201, {"token": tok, "expires_at": exp, "repositories": [{"name": repos[0]}]}) or True
+                return self._json(201, {"token": tok, "expires_at": exp, "repositories": [{"name": repos[0], "private": repos[0] in GH_PRIVATE}]}) or True
             return self._json(404, {}) or True
         if host == "github.com":
             segs = path.strip("/").split("/")
@@ -411,7 +411,7 @@ def cmd_serve(a):
                                "value_file": f"{d}/secrets/testsvc.token", "hosts": ["api.test", "tp.test"]}}, f)
     config = {
         "policy_dir": f"{d}/policies", "sources_dir": f"{d}/sources", "secrets_file": f"{d}/secrets.json",
-        "audit_log": f"{d}/audit.jsonl",
+        "audit_log": f"{d}/audit.jsonl", "sensitive_dir": f"{d}/sensitive",
         # Only the test upstream's loopback address; 10.x (rebind.test) stays blocked.
         "allow_private_upstreams": a.private or ["127.0.0.1/32"],
         "static_hosts": {"api.test": "127.0.0.1", "cdn.test": "127.0.0.1", "denied.test": "127.0.0.1",

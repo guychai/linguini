@@ -989,6 +989,8 @@ export interface EgressPolicy {
 export const githubField = (github: EgressGitHub | undefined) => (github ? { github } : {});
 export interface EgressPolicyWriter {
   apply(policy: EgressPolicy): Promise<void>;
+  /** Whether the proxy marked this conversation sensitive (private-repo read). */
+  sensitive?(conversationKey: string): Promise<boolean>;
 }
 /**
  * Writes the per-conversation policy file the egress proxy reads
@@ -996,7 +998,23 @@ export interface EgressPolicyWriter {
  * reads a partial file. The directory must not be reachable from any sandbox.
  */
 export class FileEgressPolicyWriter implements EgressPolicyWriter {
-  constructor(private readonly dir: string) {}
+  /**
+   * `sensitiveDir`: the proxy's `sensitive_dir` (EGRESS_SENSITIVE_DIR), readable by this service
+   * through the sandbox-egress group. Absent: private-repo reads are enforced by the proxy alone
+   * and never reach the stored flag.
+   */
+  constructor(
+    private readonly dir: string,
+    private readonly sensitiveDir?: string,
+  ) {}
+  async sensitive(conversationKey: string): Promise<boolean> {
+    if (!this.sensitiveDir || !/^[a-z0-9]{12,40}$/.test(conversationKey)) return false;
+    const { access } = await import("node:fs/promises");
+    return access(`${this.sensitiveDir}/${conversationKey}`).then(
+      () => true,
+      () => false,
+    );
+  }
   async apply(policy: EgressPolicy) {
     const { writeFile, rename, mkdir } = await import("node:fs/promises");
     if (!/^[a-z0-9]{12,40}$/.test(policy.conversationKey))
@@ -1149,13 +1167,39 @@ export class HandsSandbox implements SandboxProvider {
         version: 1,
         conversationKey: binding.jobId.slice("hands-".length, binding.jobId.lastIndexOf("-g")),
         workspaceId: binding.workspaceId,
-        tainted,
+        tainted: tainted || (await this.sensitiveMarked(owner, conversationId)),
         rules: this.options.egressRules?.(owner, conversationId) ?? [],
         ...githubField(this.options.egressGitHub?.(owner, conversationId)),
       });
     return { allocId: binding.allocId, generation: binding.generation };
   }
+  /**
+   * The egress proxy marked this conversation sensitive (it served a private repository with an
+   * App token, sandbox_egress.py `sensitive_dir`). The broker turns that into the stored flag.
+   */
+  async sensitiveMarked(owner: string, conversationId: string): Promise<boolean> {
+    return (await this.options.egress?.sensitive?.(handsKey(owner, conversationId))) === true;
+  }
   async execute(
+    sandbox: string,
+    call: ToolCall,
+    signal?: AbortSignal,
+    options: ExecuteOptions = {},
+  ): Promise<ToolResult> {
+    const result = await this.executeInner(sandbox, call, signal, options);
+    const { owner, conversationId } = options;
+    // This call (e.g. a git clone) may have read a private repository: the observation carries
+    // it, so the flag commits with the result.
+    if (
+      owner &&
+      conversationId &&
+      !options.tainted &&
+      (await this.sensitiveMarked(owner, conversationId))
+    )
+      return { ...result, sensitive: "private-repo" };
+    return result;
+  }
+  private async executeInner(
     _sandbox: string,
     call: ToolCall,
     _signal?: AbortSignal,
@@ -1174,7 +1218,7 @@ export class HandsSandbox implements SandboxProvider {
         version: 1,
         conversationKey: binding.jobId.slice("hands-".length, binding.jobId.lastIndexOf("-g")),
         workspaceId: binding.workspaceId,
-        tainted: options.tainted === true,
+        tainted: options.tainted === true || (await this.sensitiveMarked(owner, conversationId)),
         rules: this.options.egressRules?.(owner, conversationId) ?? [],
         ...githubField(this.options.egressGitHub?.(owner, conversationId)),
       });

@@ -1258,3 +1258,41 @@ test("afterReady runs once per generation before ensure returns; claimIdle/uncla
   await provider.unclaimIdle("alice", "c1", 1);
   assert.equal((await read(store, "alice", "c1")).hands?.state, "ready");
 });
+
+test("V1.1c the proxy's private-repo marker reaches the policy and commits the sensitive flag with the result", async (t) => {
+  const { fake, store, hands } = await setup(t);
+  const transport = new VirtualSandbox();
+  const applied: Array<{ tainted: boolean }> = [];
+  let marked = false;
+  const egress = {
+    apply: async (p: { tainted: boolean }) => void applied.push(structuredClone(p)),
+    sensitive: async (key: string) => marked && key === handsKey("alice", "c1"),
+  };
+  const sandbox = new HandsSandbox(hands(store, { transport }), { egress: egress as never });
+  const broker = new SandboxBroker(store, sandbox);
+  const pending = broker.execute("alice", "c1", {
+    id: "b0",
+    tool: "bash",
+    args: { command: "ls" },
+  });
+  await until(() => fake.allocPolls > 0, "allocation");
+  fake.release(fake.created[0]!);
+  assert.equal((await pending).sensitive, undefined);
+  assert.equal((await read(store, "alice", "c1")).tainted, false);
+  // The clone's private-repo read was marked by the proxy during this call.
+  marked = true;
+  const result = await broker.execute("alice", "c1", {
+    id: "b1",
+    tool: "bash",
+    args: { command: "git clone private" },
+  });
+  assert.equal(result.sensitive, "private-repo");
+  const c = await read(store, "alice", "c1");
+  assert.equal(c.tainted, true);
+  assert.equal(
+    c.events.filter((e) => e.type === "taint.changed").at(-1)?.data.reason,
+    "private-repo",
+  );
+  // Policies written while the marker exists already say tainted, even before the backend knew.
+  assert.equal(applied.at(-1)!.tainted, true);
+});

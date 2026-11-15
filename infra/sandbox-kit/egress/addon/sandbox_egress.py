@@ -20,6 +20,12 @@ without a body, never for a tainted (sensitive) conversation.
 GitHub (github_app.py): the guest's own credentials never reach GitHub; git push is refused;
 reads of one repository get a token minted for that repository only, when the node has a
 GitHub App configured and the conversation's policy enables it (`github.app`).
+
+Sensitive flag (V1.1c): serving a private repository with an App token makes the conversation
+sensitive. The proxy writes `<sensitive_dir>/<key>` before forwarding, treats the conversation as
+tainted from then on, and the backend picks the marker up and sets its own flag. A sensitive
+conversation reaches GitHub only for installed private repositories (App token), never public
+ones or other GitHub requests.
 """
 
 
@@ -214,6 +220,7 @@ class SandboxEgress:
         self._resolved: dict[tuple[str, str], dict[str, float]] = {}
         self.open_web = {"enabled": False, "ports": [443], **OPEN_WEB_LIMITS}
         self._secret_values: dict[str, tuple[float, bytes]] = {}
+        self._sensitive_keys: set[str] = set()
 
     # ---- configuration ----
     def load(self, loader):
@@ -283,7 +290,39 @@ class SandboxEgress:
                 policy = json.load(f)
         except (OSError, ValueError):
             return None
-        return policy if policy.get("version") == 1 and policy.get("conversationKey") == key else None
+        if policy.get("version") != 1 or policy.get("conversationKey") != key:
+            return None
+        if not policy.get("tainted") and self._sensitive(key):
+            policy["tainted"] = True  # the proxy saw a private-repo read before the backend did
+            policy["_sensitive_marker"] = True
+        return policy
+
+    def _sensitive(self, key: str) -> bool:
+        d = self.cfg.get("sensitive_dir")
+        if d:
+            return os.path.exists(os.path.join(d, key))
+        return key in self._sensitive_keys
+
+    def _mark_sensitive(self, key: str):
+        """Record that this conversation read private data. Raises when it cannot be recorded."""
+        self._sensitive_keys.add(key)
+        d = self.cfg.get("sensitive_dir")
+        if not d:
+            return
+        os.makedirs(d, mode=0o750, exist_ok=True)
+        target = os.path.join(d, key)
+        tmp = f"{target}.{os.getpid()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+        try:
+            os.write(fd, json.dumps({"reason": "private-repo", "ts": int(time.time())}).encode())
+        finally:
+            os.close(fd)
+        os.replace(tmp, target)
+
+    def _github_sensitive_ok(self, policy: dict) -> bool:
+        """A sensitive conversation may still reach GitHub, for installed private repos only
+        (enforced per request in _github_auth)."""
+        return bool(self.github and (policy.get("github") or {}).get("app") is True)
 
     def decide(self, source: str, host: str, port: int, scheme: str,
                method: str | None = None, path: str | None = None) -> Decision:
@@ -312,7 +351,8 @@ class SandboxEgress:
                 return Decision(False, "port-not-allowed", key, rule)
             if scheme not in rule.get("schemes", ["https"]):
                 return Decision(False, "scheme-not-allowed", key, rule)
-            if policy.get("tainted") and not taint_exempt(rule):
+            if policy.get("tainted") and not taint_exempt(rule) and not (
+                    host in gh.GITHUB_HOSTS and self._github_sensitive_ok(policy)):
                 return Decision(False, "tainted", key, rule)
             if method is not None:
                 methods = rule.get("methods")
@@ -465,10 +505,30 @@ class SandboxEgress:
             self.audit(**base, sandbox=d.key, decision="deny", reason=reason, secret_rule=secret_rule or None,
                        repo=repo.full_name if repo else None, git_service=repo.service if repo else None)
             return self._deny(flow, 403, reason, detail)
-        injected = self._inject(flow, host, d.rule or {})
-        github = None
-        if host in gh.GITHUB_HOSTS and not injected:
-            github = await self._github_auth(flow, host, repo, d.policy or {})
+        policy = d.policy or {}
+        if host in gh.GITHUB_HOSTS and policy.get("tainted"):
+            # Sensitive: only installed private repositories, with the App's token.
+            github = await self._github_auth(flow, host, repo, policy)
+            if not (github.get("github") == "app" and github.get("github_private") is True):
+                why = "sensitive-github"
+                self.audit(**base, sandbox=d.key, decision="deny", reason=why,
+                           repo=repo.full_name if repo else None, git_service=repo.service if repo else None)
+                return self._deny(flow, 403, why, gh.denial_message(repo, why, True) if repo else None)
+            injected = None
+        else:
+            injected = self._inject(flow, host, d.rule or {})
+            github = None
+            if host in gh.GITHUB_HOSTS and not injected:
+                github = await self._github_auth(flow, host, repo, policy)
+            if github and github.get("github") == "app" and github.get("github_private") is not False:
+                # A private (or unknown) repository read through the App: sensitive from now on.
+                try:
+                    self._mark_sensitive(d.key)
+                except OSError:
+                    self.audit(**base, sandbox=d.key, decision="deny", reason="sensitive-mark-failed",
+                               repo=repo.full_name if repo else None)
+                    return self._deny(flow, 503, "sensitive-mark-failed")
+                github["sensitive_marked"] = True
         flow.metadata["egress"] = {**base, "sandbox": d.key, "injected": injected, "websocket": is_ws or None,
                                    "open_web": True if (d.rule or {}).get("_open_web") else None,
                                    "started": time.monotonic(), **(github or {})}
@@ -532,8 +592,7 @@ class SandboxEgress:
             flow.request.headers.pop(h, None)
         if repo is None:
             return {"github": "anonymous"}
-        app_enabled = bool(self.github and (policy.get("github") or {}).get("app") is True
-                           and not policy.get("tainted"))
+        app_enabled = bool(self.github and (policy.get("github") or {}).get("app") is True)
         out = {"repo": repo.full_name, "git_service": repo.service, "github_kind": repo.kind,
                "github": "anonymous", "github_app_enabled": app_enabled}
         if not app_enabled or flow.request.scheme != "https" or not gh.credential_allowed(
@@ -549,6 +608,7 @@ class SandboxEgress:
             flow.request.headers["authorization"] = gh.auth_header_value(host, res.token)
             out["github"] = "app"
             out["github_cached"] = res.cached
+            out["github_private"] = self.github.is_private(repo.full_name)
         return out
 
     def _inject(self, flow: http.HTTPFlow, host: str, rule: dict) -> str | None:

@@ -171,7 +171,9 @@ class FakeGitHub:
                 return 422, {"message": "repository not in installation"}
             self.n += 1
             return 201, {"token": f"ghs_fake{self.n}", "expires_at": "2030-01-01T01:00:00Z",
-                         "repositories": [{"name": req["repositories"][0]}]}
+                         "repositories": [{"name": req["repositories"][0],
+                                           **({"private": req["repositories"][0] == "private"}
+                                              if req["repositories"][0] != "other" else {})}]}
         return 404, {}
 
 
@@ -210,6 +212,15 @@ class AppTests(unittest.TestCase):
         r = self.run_(self.app.token_for("octo", "other"))
         self.assertEqual(r.token, "ghs_fake2")
         self.assertEqual(self.app.mints, 2)
+
+    def test_privacy_recorded_at_mint(self):
+        self.assertIsNone(self.app.is_private("octo/private"))
+        self.run_(self.app.token_for("octo", "private"))
+        self.assertIs(self.app.is_private("octo/private"), True)
+        # GitHub did not say: unknown (the proxy treats unknown as private when marking, and as
+        # not private when deciding what a sensitive conversation may read).
+        self.run_(self.app.token_for("octo", "other"))
+        self.assertIsNone(self.app.is_private("octo/other"))
 
     def test_refresh_before_expiry(self):
         self.run_(self.app.token_for("octo", "private"))
