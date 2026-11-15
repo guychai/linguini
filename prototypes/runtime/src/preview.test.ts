@@ -60,6 +60,7 @@ async function rig(t: { after: (f: () => unknown) => void }) {
   const appPort = (app.address() as { port: number }).port;
   const ports = new MemoryPreviewPorts();
   const conversations = new Set(["alice\0c1", "alice\0c2", "bob\0c3"]);
+  const tainted = new Set<string>();
   const activity = new PreviewActivity();
   const targets: string[] = [];
   const proxy = new PreviewProxy({
@@ -71,11 +72,13 @@ async function rig(t: { after: (f: () => unknown) => void }) {
         return "127.0.0.1";
       },
     },
-    conversationExists: async (o, i) => {
+    conversationState: async (o, i) => {
       if (!conversations.has(`${o}\0${i}`)) throw new Error("404");
+      return { tainted: tainted.has(`${o}\0${i}`) };
     },
     resolveOwner: (r) => String(r.headers["x-test-owner"] ?? "alice"),
     allowTarget: (h) => h === "127.0.0.1",
+    taintRecheckMs: 25,
   });
   const front = createServer((req, res) => void proxy.handle(req, res));
   front.on("upgrade", (req, socket, head) => void proxy.upgrade(req, socket, head));
@@ -104,7 +107,8 @@ async function rig(t: { after: (f: () => unknown) => void }) {
         r.end();
       },
     );
-  return { seen, ports, appPort, frontPort, get, activity, targets };
+  const taint = (owner: string, id: string) => void tainted.add(`${owner}\0${id}`);
+  return { seen, ports, appPort, frontPort, get, activity, targets, taint };
 }
 
 test("preview routing: only shared ports of an existing conversation of this owner; 404 otherwise", async (t) => {
@@ -192,6 +196,7 @@ test("share_port tool: cspSandbox cannot be turned off", async () => {
     ports,
     baseUrl: (id) => `https://h/preview/${id}`,
     record: async () => {},
+    tainted: async () => false,
   });
   await h("alice", "c1", {
     tool: "share_port",
@@ -240,7 +245,7 @@ async function rawUpstream(t: { after: (f: () => unknown) => void }, reply: (s: 
     ports,
     activity: new PreviewActivity(),
     targets: { address: async () => "127.0.0.1" },
-    conversationExists: async () => {},
+    conversationState: async () => ({ tainted: false }),
     resolveOwner: () => "alice",
     allowTarget: () => true,
     wsHandshakeTimeoutMs: 200,
@@ -369,6 +374,7 @@ test("share_port tool: validates, records, returns URL and env file", async () =
     ports,
     baseUrl: (id) => `https://t3.example/preview/${id}`,
     record: async (_o, _i, type) => void notes.push(type),
+    tainted: async () => false,
   });
   const out = await h("alice", "c1", {
     tool: "share_port",
@@ -424,3 +430,81 @@ test(
     }
   },
 );
+
+test("P0.1 tainted conversation: a port shared while clean answers 403 preview_tainted (HTTP and WebSocket)", async (t) => {
+  const r = await rig(t);
+  await r.ports.share("alice", "c1", { port: r.appPort });
+  const base = `/preview/c1/${r.appPort}/`;
+  assert.equal((await r.get(base)).status, 200, "clean: served");
+  r.taint("alice", "c1");
+  const seenBefore = r.seen.length;
+  const res = await r.get(base);
+  assert.equal(res.status, 403);
+  assert.match(res.body, /read sensitive data/);
+  assert.equal((await r.get(`/preview/c1/${r.appPort}`)).status, 403, "no redirect either");
+  assert.equal(r.seen.length, seenBefore, "nothing reached the sandbox app");
+  // The WebSocket upgrade is refused the same way.
+  const ws = new WebSocket(`ws://127.0.0.1:${r.frontPort}${base}ws`);
+  const [, reply] = (await once(ws, "unexpected-response")) as [unknown, IncomingMessage];
+  assert.equal(reply.statusCode, 403);
+  reply.destroy();
+  // Other conversations are unaffected.
+  await r.ports.share("alice", "c2", { port: r.appPort });
+  assert.equal((await r.get(`/preview/c2/${r.appPort}/`)).status, 200);
+});
+
+test("P0.1 open preview WebSocket is closed once the conversation becomes tainted", async (t) => {
+  const r = await rig(t);
+  await r.ports.share("alice", "c1", { port: r.appPort });
+  const ws = new WebSocket(`ws://127.0.0.1:${r.frontPort}/preview/c1/${r.appPort}/ws`);
+  await once(ws, "open");
+  ws.send("before");
+  assert.equal(String((await once(ws, "message"))[0]), "echo:before");
+  const closed = once(ws, "close");
+  r.taint("alice", "c1");
+  await closed;
+  assert.equal(ws.readyState, WebSocket.CLOSED);
+});
+
+test("P0.1 share_port tool: refused once tainted (typed, nothing stored), env file lists no ports; unshare still works", async () => {
+  const ports = new MemoryPreviewPorts();
+  const notes: string[] = [];
+  let tainted = false;
+  const h = previewToolHandler({
+    ports,
+    baseUrl: (id) => `https://t3.example/preview/${id}`,
+    record: async (_o, _i, type) => void notes.push(type),
+    tainted: async () => tainted,
+  });
+  await h("alice", "c1", { tool: "share_port", args: { port: 5173 } });
+  tainted = true;
+  await assert.rejects(
+    h("alice", "c1", { tool: "share_port", args: { port: 8080 } }),
+    (e: { status?: number; code?: string }) => e.status === 403 && e.code === "preview_tainted",
+  );
+  assert.equal(await ports.get("alice", "c1", 8080), null, "no share stored");
+  const off = await h("alice", "c1", { tool: "unshare_port", args: { port: 5173 } });
+  assert.match(off.text, /no longer shared/);
+  assert.doesNotMatch(off.envFile, /PREVIEW_BASE_URL_/, "a tainted sandbox advertises no ports");
+  assert.deepEqual(notes, ["preview.shared", "preview.unshared"]);
+});
+
+test("P0.2 preview CSP: sandboxed, and every fetch directive stays on the preview itself", () => {
+  const directives = new Map(
+    PREVIEW_CSP.split(";").map((d) => {
+      const [name, ...values] = d.trim().split(/\s+/);
+      return [name!, values] as const;
+    }),
+  );
+  assert.deepEqual(directives.get("sandbox"), ["allow-scripts", "allow-forms"]);
+  assert.deepEqual(directives.get("default-src"), ["'self'", "data:", "blob:"]);
+  assert.deepEqual(directives.get("connect-src"), ["'self'"]);
+  assert.deepEqual(directives.get("img-src"), ["'self'", "data:", "blob:"]);
+  assert.deepEqual(directives.get("form-action"), ["'self'"]);
+  assert.deepEqual(directives.get("base-uri"), ["'self'"]);
+  // No directive names a remote origin or a scheme wildcard.
+  for (const [name, values] of directives)
+    for (const v of values)
+      assert.ok(!/^(https?:|wss?:|\*)/.test(v) && !v.includes("."), `${name} ${v}`);
+  assert.ok(!PREVIEW_CSP.includes("allow-same-origin") && !PREVIEW_CSP.includes("allow-popups"));
+});

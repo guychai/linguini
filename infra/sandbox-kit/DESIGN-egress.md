@@ -89,7 +89,12 @@ Flow for one HTTPS request:
    the `http` scheme, and is never injected.
 
 **Taint.** The backend writes `tainted: true` into the policy once the conversation has seen
-production data. From then on the proxy allows only `allowWhenTainted` rules. The broker relaxes
+production data. From then on the proxy allows only `allowWhenTainted` rules. That exemption is
+only for hosts whose request logs nobody outside us can read: it is refused (the backend will not
+start, `prototypes/runtime/src/egress-rules.ts`) and ignored by the proxy (`taint_exempt`) on
+GitHub (`github.com`, `*.githubusercontent.com`, `ghcr.io`), npm/yarn, PyPI, Docker Hub and any
+wildcard host, because a GET can carry data in its path or query (`api.github.com/repos/<data>/…`,
+`registry.npmjs.org/<data>`) and the registry or the owner of the named package sees it. The broker relaxes
 `egress: "proxied"` tools after taint only when the provider has this boundary
 (`egressBoundary: "proxy"`, i.e. `HandsSandbox` built with an `EgressPolicyWriter`).
 

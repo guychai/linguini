@@ -44,7 +44,8 @@ git add -A && git commit      # in this repo
 - `bump` reports `clean`, `3way` (merged, so review it) or `FAILED` (fix it in the printed tree,
   then `regen <tree>`). If `pnpm-lock.yaml.patch` fails, or with `RELOCK=1`, it takes upstream's
   lock and runs `pnpm install --lockfile-only`. After a bump, check for new upstream automation
-  (e.g. `.github/workflows`, `.github/scripts`) and add it to `deleted` (see UPSTREAM).
+  (e.g. `.github/workflows`, `.github/scripts`) and add it to `deleted` (see UPSTREAM). Past
+  `v0.1.3`, keep upstream guest links hidden and disabled (D14, see UPSTREAM).
   `pnpm-workspace.yaml` is unpatched (upstream's `apps/*` already includes apps/owned-web).
   prototypes/runtime is npm with its own lock, so it's ours as-is.
 - **Browser regression suite:** `.linguini/e2e` runs `e2e/` (Playwright) against a live deployment; see e2e/README.md.

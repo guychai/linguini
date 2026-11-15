@@ -27,7 +27,7 @@ if git -C . rev-parse --git-dir >/dev/null 2>&1; then
   untracked=$(git ls-files --others --ignored --exclude-standard -- . | grep -vE '(^|/)__pycache__/|\.pyc$' || true)
   [ -z "$untracked" ] && ok "no ignored files inside the kit" || no "ignored (not archived) files in the kit: $(echo "$untracked" | tr '\n' ' ')"
 fi
-python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' egress/addon/sandbox_egress.py egress/addon/github_app.py egress/github-app-create.py egress/tests/harness.py egress/tests/test_github_app.py egress/tests/test_github_app_create.py && ok "python syntax (egress)" || no "python syntax (egress)"
+python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' egress/addon/sandbox_egress.py egress/addon/github_app.py egress/github-app-create.py egress/tests/harness.py egress/tests/test_github_app.py egress/tests/test_github_app_create.py egress/tests/test_taint_rules.py && ok "python syntax (egress)" || no "python syntax (egress)"
 for f in egress/*.json; do jq -e . "$f" >/dev/null && ok "json $f" || no "json $f"; done
 # Every pin the scripts need exists for both arches.
 ( . ./versions.env; for a in amd64 arm64; do v="KIT_KATA_SHA256_$a"; w="KIT_NOMAD_SHA256_$a"; [[ "${!v}" =~ ^[0-9a-f]{64}$ && "${!w}" =~ ^[0-9a-f]{64}$ ]] || exit 1; done ) && ok "per-arch sha256 pins (amd64, arm64)" || no "per-arch sha256 pins"

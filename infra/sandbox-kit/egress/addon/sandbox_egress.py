@@ -55,6 +55,29 @@ ALWAYS_BLOCKED = [
 GITHUB_API_BUDGET = {"calls": 100, "window_s": 600}
 # How long a DNS answer we gave a sandbox stays a valid transparent destination for that name.
 RESOLVED_TTL = 3600.0
+# allowWhenTainted is ignored on these hosts and all their subdomains, and on wildcard rules: data
+# can ride in the path or query of a GET (api.github.com/repos/<data>/…, registry.npmjs.org/<data>)
+# and the registry, or whoever owns the named package or repository, sees it. Keep in sync with
+# prototypes/runtime/src/egress-rules.ts TAINT_UNSAFE_SUFFIXES (the backend refuses to start with
+# such a rule; this covers rules that reach the policy any other way).
+TAINT_UNSAFE_SUFFIXES = (
+    "github.com", "githubusercontent.com", "ghcr.io",
+    "npmjs.org", "npmjs.com", "yarnpkg.com",
+    "pypi.org", "pythonhosted.org",
+    "docker.io", "docker.com",
+)
+
+
+def taint_exempt(rule: dict) -> bool:
+    """Whether a rule really keeps its host reachable after taint."""
+    if rule.get("allowWhenTainted") is not True:
+        return False
+    host = _norm_host(str(rule.get("host", "")))
+    if not host or "*" in host:
+        return False
+    return not any(host == s or host.endswith("." + s) for s in TAINT_UNSAFE_SUFFIXES)
+
+
 # Blocked unless the node config lists them in allow_private_upstreams.
 PRIVATE = [
     ipaddress.ip_network(n)
@@ -223,7 +246,7 @@ class SandboxEgress:
                 return Decision(False, "port-not-allowed", key, rule)
             if scheme not in rule.get("schemes", ["https"]):
                 return Decision(False, "scheme-not-allowed", key, rule)
-            if policy.get("tainted") and not rule.get("allowWhenTainted"):
+            if policy.get("tainted") and not taint_exempt(rule):
                 return Decision(False, "tainted", key, rule)
             if method is not None:
                 methods = rule.get("methods")

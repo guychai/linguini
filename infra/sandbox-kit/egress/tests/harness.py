@@ -41,7 +41,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)
 NAMES = ["api.test", "cdn.test", "denied.test", "metadata.test", "rebind.test", "denied-for-secret.test", "tp.test",
-         "github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com", "localhost"]
+         "github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com", "localhost",
+         "registry.npmjs.org", "x.wild.test"]
 GITHUB_NAMES = ["github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com"]
 # The mock App: installation 7 on owner "octo" includes only these repositories.
 GH_INSTALLED = {"public", "private"}
@@ -358,6 +359,9 @@ def write_policy(d, key, tainted, https_port, tcp_port, only=None, github_app=Tr
          "paths": ["/*/*/git-upload-pack", "/*/*.git/git-upload-pack"]},
         {"host": "api.github.com", "ports": [https_port], "methods": ["GET", "HEAD"]},
         {"host": "raw.githubusercontent.com", "ports": [https_port], "methods": ["GET", "HEAD"]},
+        # allowWhenTainted on a package registry and on a wildcard host: the proxy ignores it.
+        {"host": "registry.npmjs.org", "ports": [https_port], "allowWhenTainted": True, "methods": ["GET", "HEAD"]},
+        {"host": "*.wild.test", "ports": [https_port], "allowWhenTainted": True, "methods": ["GET", "HEAD"]},
     ]
     if only:
         rules = [r for r in rules if r["host"] in only]
@@ -406,6 +410,7 @@ def cmd_serve(a):
         "static_hosts": {"api.test": "127.0.0.1", "cdn.test": "127.0.0.1", "denied.test": "127.0.0.1",
                          "metadata.test": "169.254.169.254", "rebind.test": "10.255.255.1",
                          "denied-for-secret.test": "127.0.0.1",
+                         "registry.npmjs.org": "127.0.0.1", "x.wild.test": "127.0.0.1",
                          # netns-test maps this TEST-NET address to the local upstream on the node
                          "tp.test": "198.51.100.7", **{n: "127.0.0.1" for n in GITHUB_NAMES}},
         "github_app": {"app_id": 4242, "private_key_file": f"{d}/secrets/github-app.pem",
