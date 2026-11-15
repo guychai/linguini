@@ -42,3 +42,23 @@ Links in replies never point straight out. The web UI rewrites every external ht
 there (`prototypes/runtime/src/out.ts`): it shows the full URL with the host called out, and
 leaves only when the user clicks Continue (no redirect, no script, `Referrer-Policy:
 no-referrer`). Other schemes are dropped; generated images stay blocked.
+
+## Host tools, entitlements and Trino
+
+- Host tools (`prototypes/runtime/src/host-tools.ts`) run on the backend, not in the sandbox:
+  share_port / unshare_port, html_preview / html_render, trino_query (and later
+  github_create_pr). Each declares the kinds of place it may write; the broker checks the
+  concrete destinations before the ledger intent and again inside it (403 `destination_denied`).
+  There is no sensitive-thread state.
+- Entitlements (`entitlements.ts`) are on whenever `AUTH_MODE=better-auth`; `ENTITLEMENTS=0`
+  turns them off. trino_query, github_create_pr, MCP servers and GitHub reads (scope
+  `github_read`, which replaces `GITHUB_APP_OWNERS` in this mode) need an allow. Admins edit the
+  org/role/user rules with `GET/PUT /api/admin/entitlements`; users see theirs at
+  `GET /api/me/entitlements`. Precedence: org deny > project deny > role/user deny > user allow >
+  role allow > org allow.
+- Seeding: `ENTITLEMENTS_SEED_FILE` points at a JSON rule list applied at startup only while
+  there are no admin rules. `entitlements.dev.json` allows the three gated objects for the
+  `admin` role, for the dev box.
+- trino_query is a placeholder: `TRINO_MODE=fake` offers it with an in-memory catalog, queried
+  as the user's email local part (no email: refused). `TRINO_URL`'s host is added to the sandbox
+  deny list (`EGRESS_DENY_HOSTS`), so no egress rule may admit it.
