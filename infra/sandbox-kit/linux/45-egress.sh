@@ -4,6 +4,7 @@
 # dedicated system user under systemd, the node nftables rules (egress/node/sandbox-net.sh),
 # then proof on this kernel:
 #   1. egress/tests/proxy-test.sh   proxy policy, injection, redirects, websockets, DNS, audit
+#      egress/tests/github-test.sh  git through the proxy: repo-scoped GitHub App tokens, no push
 #   2. egress/tests/netns-test.sh   forced routing with real namespaces (no bypass, spoofing, v6)
 #   3. a Kata guest on its own sbx* Docker network with no proxy settings: transparent MITM with
 #      the node CA in its trust store, allowlisted package install, denied host, no direct route,
@@ -46,6 +47,7 @@ mv_=$("$VENV/bin/mitmdump" --version 2>/dev/null | awk '/^Mitmproxy:/ {print $2}
 # Code the service runs: copied (root-owned), so the kit checkout can't change it underneath.
 sudo install -d -m 0755 "$OPT/addon" "$OPT/node"
 sudo install -m 0644 "$EG/addon/sandbox_egress.py" "$OPT/addon/sandbox_egress.py"
+sudo install -m 0644 "$EG/addon/github_app.py" "$OPT/addon/github_app.py"
 sudo install -m 0755 "$EG/run-proxy.sh" "$OPT/run-proxy.sh"
 sudo install -m 0755 "$EG/node/sandbox-net.sh" "$OPT/node/sandbox-net.sh"
 sudo install -m 0755 "$EG/node/sandbox-netctl" "$OPT/node/sandbox-netctl"
@@ -127,6 +129,8 @@ sudo test "$(sudo stat -c %a "$CA_DIR/mitmproxy-ca.pem")" = 600 && pass node-ca 
 # ---- 1 + 2: the box-validated suites, again on this kernel ----
 if EGRESS_VENV="$VENV" bash "$EG/tests/proxy-test.sh" > "$KIT_EVIDENCE/$KIT_SCRIPT.proxy-test.txt" 2>&1; then pass proxy-test "$(grep -E '^=== ' "$KIT_EVIDENCE/$KIT_SCRIPT.proxy-test.txt" | tail -1)"
 else fail proxy-test "$(grep -E '^FAIL' "$KIT_EVIDENCE/$KIT_SCRIPT.proxy-test.txt" | head -3 | tr '\n' ' ')"; fi
+if EGRESS_VENV="$VENV" bash "$EG/tests/github-test.sh" > "$KIT_EVIDENCE/$KIT_SCRIPT.github-test.txt" 2>&1; then pass github-test "$(grep -E '^=== ' "$KIT_EVIDENCE/$KIT_SCRIPT.github-test.txt" | tail -1)"
+else fail github-test "$(grep -E '^FAIL' "$KIT_EVIDENCE/$KIT_SCRIPT.github-test.txt" | head -3 | tr '\n' ' ')"; fi
 if EGRESS_VENV="$VENV" bash "$EG/tests/netns-test.sh" > "$KIT_EVIDENCE/$KIT_SCRIPT.netns-test.txt" 2>&1; then pass netns-test "$(grep -E '^=== ' "$KIT_EVIDENCE/$KIT_SCRIPT.netns-test.txt" | tail -1)"
 else fail netns-test "$(grep -E '^FAIL|BLOCKED' "$KIT_EVIDENCE/$KIT_SCRIPT.netns-test.txt" | head -3 | tr '\n' ' ')"; fi
 

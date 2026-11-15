@@ -234,7 +234,7 @@ async function setup(t: { after: (f: () => Promise<void>) => void }) {
       sandbox,
       ...options,
     });
-  return { fake, store, openStore, hands, template, networks, policies, rules };
+  return { fake, store, openStore, hands, template, networks, policies, rules, sandbox };
 }
 /**
  * Stands in for the sandbox: interprets exactly the argv shapes sandboxArgv() emits against an
@@ -432,6 +432,54 @@ test("policy runs before allocation: a refused call never starts a sandbox", asy
   );
   assert.equal((await read(store, "alice", "c3")).tainted, true);
   assert.deepEqual(fake.requests, []);
+});
+
+test("GitHub App access reaches the proxy policy only for owners the server enables", async (t) => {
+  const { fake, store, hands, policies, sandbox: placement } = await setup(t);
+  await store.create(initial("c2", "bob"));
+  const transport = new VirtualSandbox();
+  const applied: Array<Record<string, unknown>> = [];
+  const egress = { apply: async (p: unknown) => void applied.push(structuredClone(p) as never) };
+  const github = (owner: string) => (owner === "alice" ? { app: true } : undefined);
+  const nomad = hands(store, {
+    transport,
+    sandbox: { ...placement, egress: { ...placement.egress, github } },
+  });
+  const sandbox = new HandsSandbox(nomad, {
+    egress,
+    egressRules: () => [],
+    egressGitHub: github,
+  });
+  const broker = new SandboxBroker(store, sandbox);
+  for (const [owner, id] of [
+    ["alice", "c1"],
+    ["bob", "c2"],
+  ] as const) {
+    const pending = broker.execute(owner, id, {
+      id: `b-${owner}`,
+      tool: "bash",
+      args: { command: "git clone https://github.com/octo/private" },
+    });
+    await until(() => fake.created.length === (owner === "alice" ? 1 : 2), "job submitted");
+    fake.release(fake.created.at(-1)!);
+    await pending;
+  }
+  assert.deepEqual(
+    applied.map((p) => [p.conversationKey, p.github]),
+    [
+      [handsKey("alice", "c1"), { app: true }],
+      [handsKey("bob", "c2"), undefined],
+    ],
+  );
+  assert.equal("github" in applied[1]!, false);
+  // NomadKataHands writes the same field before submitting each job.
+  assert.deepEqual(
+    policies.applied.map((p) => [p.conversationKey, p.github]),
+    [
+      [handsKey("alice", "c1"), { app: true }],
+      [handsKey("bob", "c2"), undefined],
+    ],
+  );
 });
 
 test("with the proxy as boundary, tainted bash runs and the proxy receives the taint and trusted allowlist", async (t) => {

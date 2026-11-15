@@ -79,3 +79,13 @@ jobs:
       - name: Sandbox kit static checks
         working-directory: .linguini/build
         run: bash infra/sandbox-kit/tests/validate-static.sh
+      # The egress proxy on loopback (no root): policy suite, GitHub (real git against a mock
+      # GitHub, repo-scoped App tokens) and unit tests, with the hash-locked mitmproxy.
+      - name: Egress proxy tests (policy, GitHub)
+        working-directory: .linguini/build/infra/sandbox-kit/egress
+        run: |
+          python3 -m venv /tmp/egress-venv
+          /tmp/egress-venv/bin/pip install -q --no-deps --require-hashes --only-binary :all: -r requirements.lock
+          /tmp/egress-venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+          EGRESS_VENV=/tmp/egress-venv bash tests/proxy-test.sh
+          EGRESS_VENV=/tmp/egress-venv bash tests/github-test.sh

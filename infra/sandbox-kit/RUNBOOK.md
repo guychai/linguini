@@ -183,7 +183,8 @@ EGRESS_CA_FILE=/var/lib/sandbox-egress/guest-ca.pem \
 - **Tokens** go only in `/etc/sandbox-egress/secrets/<name>.token` (root:sandbox-egress 0640)
   plus an entry in `/etc/sandbox-egress/secrets.json` (see `egress/secrets.example.json`).
   Then `sudo systemctl restart sandbox-egress`. They never go in a policy, the backend's env,
-  or a guest.
+  or a guest. GitHub is not configured this way: the proxy mints per-repository tokens from the
+  Linguini GitHub App (`egress/GITHUB.md`), and drops any GitHub credentials a guest sends.
 - **Inside the guest**, the proxy env and the CA (`/local/egress-ca.pem`, with
   `SSL_CERT_FILE` and similar variables) are set for the task. The inner dockerd does not yet
   pull through the proxy (DESIGN-egress.md, gap 3).

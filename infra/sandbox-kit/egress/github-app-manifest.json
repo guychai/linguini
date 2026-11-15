@@ -1,0 +1,16 @@
+{
+  "name": "linguini-guychai",
+  "url": "https://github.com/guychai/linguini",
+  "description": "Git access for Linguini sandboxes. The Linguini egress proxy mints short-lived tokens limited to one repository per request; sandboxes never see them.",
+  "public": false,
+  "hook_attributes": {
+    "url": "https://example.invalid/linguini-github-app-has-no-webhooks",
+    "active": false
+  },
+  "redirect_url": "http://127.0.0.1:8719/callback",
+  "default_permissions": {
+    "contents": "read",
+    "metadata": "read"
+  },
+  "default_events": []
+}

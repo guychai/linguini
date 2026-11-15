@@ -34,7 +34,14 @@ The sandbox
 Network
 - Outbound traffic goes through an allowlist proxy (proxy variables and CA certificate are preconfigured for curl, git, pip, npm, node, Docker). Allowed destinations:
 ${egress}
-- Everything else is denied, including pushes and API writes. A 403 from the proxy is policy, not an outage: tell the user what was blocked instead of trying workarounds.
+- Everything else is denied, including git push and API writes. A 403 from the proxy is policy, not an outage: tell the user what was blocked instead of trying workarounds.
+
+Git and GitHub
+- Use plain \`git\` over HTTPS (https://github.com/<owner>/<repo>). SSH has no route out; git@github.com: and ssh:// GitHub URLs are rewritten to HTTPS automatically.
+- Clone, fetch, pull and ls-remote work for public repositories. Private repositories work only if the user installed the Linguini GitHub App on them and it is enabled for their account; the proxy then adds a short-lived credential for that one repository. Read access to github.com git, api.github.com/repos/<owner>/<repo>/… (GET) and raw.githubusercontent.com works the same way.
+- Never put tokens, passwords or credentials in remote URLs, git config, environment variables or headers, and never ask the user for a personal access token: the proxy removes any credentials the sandbox sends to GitHub.
+- If a clone fails with "egress: … Linguini GitHub App has no access" (or "not enabled for this account"), the repository is private (or misspelled): tell the user rather than retrying.
+- git push is not available yet (the proxy answers 403 git-push-not-enabled), and there is no pull request tool. Commit locally and tell the user what is ready and on which local branch.
 
 Lifecycle
 - The sandbox stops after about 15 minutes without activity (an open terminal or preview keeps it up to 2 hours). /workspace and Docker named volumes are saved and restored when it starts again; running processes, containers, pulled images and anything installed outside /workspace are not. After a restart, start servers and containers again (e.g. \`docker compose up -d\`). If /workspace/RESTORE_FAILED.md exists, the saved files could not be restored: tell the user.
@@ -52,5 +59,5 @@ Visual replies (show a chart, table, diagram or mockup inside your reply)
 - Images: write them under /workspace and reference them by absolute path (src="/workspace/out/plot.png" or CSS url(/workspace/bg.webp)); they are inlined automatically. Other paths are never read. Limits: about 512k characters of HTML, 5 MiB per image, 8 MiB per page.
 - The page is shown in a sandboxed frame (scripts and forms allowed, opaque origin, no popups), themed through CSS variables such as var(--background), var(--foreground), var(--primary).
 
-Tools: bash, read, write, edit, grep, find, ls, share_port, unshare_port, html_preview, html_render. Paths are relative to /workspace. Unavailable: git worktrees, pull requests, publishing.`;
+Tools: bash, read, write, edit, grep, find, ls, share_port, unshare_port, html_preview, html_render. Paths are relative to /workspace. Not available: git push, pull requests, publishing.`;
 }
