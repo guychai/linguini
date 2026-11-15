@@ -1,7 +1,7 @@
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+// Model-facing descriptions and parameter schemas of the sandbox tools (durable-harness.ts).
 import { Type } from "typebox";
 import { HTML_PARAM_DESCRIPTIONS, HTML_TOOL_DESCRIPTIONS } from "./html-render.ts";
-import type { ToolCall, ToolName, ToolResult } from "./sandbox.ts";
+import type { ToolName } from "./sandbox.ts";
 
 /** What each tool really does in the sandbox (kept in step with sandboxArgv in hands.ts). */
 export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
@@ -18,10 +18,9 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   unshare_port: "Stop sharing a previously shared preview port.",
   ...HTML_TOOL_DESCRIPTIONS,
 };
-export function sandboxTools(
-  execute: (call: ToolCall, signal?: AbortSignal) => Promise<ToolResult>,
-): ToolDefinition[] {
-  const schemas = {
+/** Parameter schemas of the sandbox tools. */
+export function toolSchemas() {
+  return {
     read: Type.Object({
       path: Type.String(),
       offset: Type.Optional(Type.Number()),
@@ -66,58 +65,4 @@ export function sandboxTools(
       height: Type.Number({ description: HTML_PARAM_DESCRIPTIONS.height }),
     }),
   };
-  return (Object.entries(schemas) as Array<[ToolName, (typeof schemas)[ToolName]]>).map(
-    ([name, parameters]) => ({
-      name,
-      label: name,
-      description: TOOL_DESCRIPTIONS[name],
-      parameters,
-      execute: async (id, args, signal) => {
-        if (!args || typeof args !== "object" || Array.isArray(args))
-          throw new Error("Invalid tool parameters");
-        const result = await execute(
-          { id, tool: name, args: args as Record<string, unknown> },
-          signal,
-        );
-        return {
-          content: [
-            { type: "text" as const, text: result.text },
-            ...(result.images ?? []).map((image) => ({
-              type: "image" as const,
-              data: image.data,
-              mimeType: image.mimeType,
-            })),
-          ],
-          details: { sandbox: true },
-        };
-      },
-    }),
-  );
-}
-export default function sandboxExtension(pi: ExtensionAPI) {
-  const endpoint = process.env.T3_SANDBOX_URL;
-  const capability = process.env.T3_SANDBOX_CAPABILITY;
-  if (!endpoint || !capability)
-    throw new Error("Sandbox extension requires a scoped capability and gateway URL");
-  for (const tool of sandboxTools(async (call, signal) => {
-    const response = await fetch(new URL("/tools", endpoint), {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${capability}` },
-      body: JSON.stringify(call),
-      signal,
-    });
-    const result = (await response.json()) as ToolResult & { error?: string };
-    if (!response.ok) throw new Error(result.error ?? "Sandbox tool rejected");
-    return result;
-  }))
-    pi.registerTool(tool);
-  // Pi's direct !shell route is distinct from its bash tool.
-  pi.on("user_bash", async () => ({
-    result: {
-      output: "Direct shell disabled; use the sandbox bash tool",
-      exitCode: 1,
-      cancelled: false,
-      truncated: false,
-    },
-  }));
 }

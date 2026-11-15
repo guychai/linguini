@@ -22,8 +22,6 @@ import {
 import { Engine } from "./engine.ts";
 import { FixtureHarness, type Harness, type HarnessFactory, type Sink } from "./harness.ts";
 import { FixtureSandbox, SandboxBroker } from "./sandbox.ts";
-import { gateway } from "./gateway.ts";
-import { issueCapability } from "./capability.ts";
 
 const database = process.env.TEST_DATABASE_URL;
 function gate() {
@@ -366,23 +364,6 @@ for (const kind of ["sqlite", "postgres"] as const) {
             (e: unknown) => e instanceof ApiError && e.status === 501,
           );
         await broker.execute(owner, id, { id: "direct", tool: "bash", args: { command: "pwd" } });
-        const key = "test-only-capability-key-000000000000";
-        const server = gateway(broker, key).listen(0, "127.0.0.1");
-        await once(server, "listening");
-        const address = server.address();
-        assert.ok(address && typeof address !== "string");
-        try {
-          for (const route of ["/actions/create-pr", "/actions/publish"]) {
-            const response: Response = await fetch(`http://127.0.0.1:${address.port}${route}`, {
-              method: "POST",
-              headers: { authorization: `Bearer ${issueCapability(key, owner, id)}` },
-              body: "{}",
-            });
-            assert.equal(response.status, 501, route);
-          }
-        } finally {
-          await new Promise<void>((r) => server.close(() => r()));
-        }
       } finally {
         await engine.stop();
         await store.close();
@@ -391,33 +372,6 @@ for (const kind of ["sqlite", "postgres"] as const) {
     },
   );
 }
-
-test(
-  "an abandoned (disposed) Pi session cannot overwrite the next turn's Pi state",
-  { timeout: 20_000 },
-  async () => {
-    const { PiHarness } = await import("./harness.ts");
-    const dir = await mkdtemp(join(tmpdir(), "regress-pi-")),
-      store = new SqliteStore(join(dir, "s.sqlite"));
-    try {
-      await store.create(initial("pi", "alice"));
-      const broker = new SandboxBroker(store, new FixtureSandbox());
-      const pi = await PiHarness.create(broker, "alice", "pi", join(dir, "host"), "old-job");
-      const persist = (pi as unknown as { persist: () => Promise<void> }).persist;
-      pi.dispose();
-      // A later turn has written its own state.
-      await store.mutate("alice", "pi", (c) => {
-        c.piEntries = [{ type: "session", marker: "next-turn" } as never];
-      });
-      await persist();
-      const c = await read(store, "alice", "pi");
-      assert.deepEqual(c.piEntries, [{ type: "session", marker: "next-turn" }]);
-    } finally {
-      await store.close();
-      await rm(dir, { recursive: true, force: true });
-    }
-  },
-);
 
 for (const kind of ["sqlite", "postgres"] as const)
   test(

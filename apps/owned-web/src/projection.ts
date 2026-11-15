@@ -6,9 +6,9 @@ import * as Schema from "effect/Schema";
 import type { Conversation, Job } from "./adapter.ts";
 let harnessLabel = "Pi (deterministic fixture)";
 export function configureHarness(info: { harness?: string; model?: string }) {
-  if (info.harness === "pi") {
+  if (info.harness === "durable") {
     MODEL.model = info.model ?? "claude-sonnet-4-5";
-    harnessLabel = "Pi (host SDK, live calls unverified)";
+    harnessLabel = "Pi Durable";
   }
 }
 export const MODEL = { instanceId: "pi", model: "fixture" };

@@ -21,6 +21,20 @@ jobs:
     name: Typecheck, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Throwaway Postgres for the Postgres store, Pi Durable log and browser tests (no real data).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: linguini_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/linguini_test
     steps:
       - uses: actions/checkout@v5
         with:
@@ -67,12 +81,13 @@ jobs:
           npm ci
           npm run typecheck
           npm test
+          npm run build
       - name: Owned web UI (apps/owned-web)
         working-directory: .linguini/build/apps/owned-web
         run: |
           pnpm run typecheck
-          pnpm run test
           pnpm run build
+          pnpm run test
       - name: Workspace typecheck
         working-directory: .linguini/build
         run: pnpm run typecheck

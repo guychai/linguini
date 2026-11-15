@@ -5,7 +5,6 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { Client, Pool, type PoolClient } from "pg";
 
 export interface JournalEvent {
@@ -32,7 +31,6 @@ export interface Conversation {
   /** Files the user saved in the Files panel since Pi's last turn (files.ts); consumed by the
    * engine, which tells Pi about them at the start of its next turn. */
   userEdits?: string[];
-  piEntries?: FileEntry[];
   metadata?: {
     archivedAt?: string | null;
     pinnedAt?: string | null;

@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { timingSafeEqual, createHash } from "node:crypto";
 import { readFile, stat, realpath } from "node:fs/promises";
 import { resolve, sep, extname } from "node:path";
-import { body } from "./gateway.ts";
+import { body } from "./http-body.ts";
 import { ApiError, EVENT_PAGE_DEFAULT, initial, read, append, type Conversation } from "./store.ts";
 import { unresolved } from "./ledger.ts";
 import { Engine, type Command } from "./engine.ts";
@@ -175,7 +175,7 @@ export function api(
         json(200, {
           ok: true,
           backend: "owned-postgres-pi",
-          harness: process.env.HARNESS_MODE === "pi" ? "pi" : "fixture",
+          harness: process.env.HARNESS_MODE === "fixture" ? "fixture" : "durable",
           model: process.env.PI_MODEL ?? "claude-sonnet-4-5",
           thinkingLevel: process.env.PI_THINKING_LEVEL ?? null,
         });

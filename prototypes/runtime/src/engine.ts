@@ -1,6 +1,5 @@
 import { userEditNote } from "./files.ts";
 import { clearOnMessage } from "./settlement.ts";
-import { recordPiOutcome, recoverPiState } from "./pi-state.ts";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import {
@@ -259,7 +258,6 @@ export class Engine {
         for (const job of c.jobs)
           if (job.status === "running" || job.status === "queued") {
             job.status = "cancelled";
-            recordPiOutcome(c, job.id, "cancelled");
             append(c, "run.cancelled", { jobId: job.id });
           }
       } else {
@@ -409,7 +407,6 @@ export class Engine {
         // Interrupted non-idempotent tool calls become unknown and block further work.
         reconcileOnAcquire(c, c.epoch);
         // Anything still marked running belonged to a previous owner that is gone.
-        recoverPiState(c);
         for (const job of c.jobs) {
           if (job.status === "running") {
             job.status = "interrupted";
@@ -577,7 +574,6 @@ export class Engine {
         const current = c.jobs.find((j) => j.id === job.id)!;
         if (current.status === "running" && !this.stopped) {
           current.status = "done";
-          recordPiOutcome(c, job.id, "done");
           append(c, "assistant.completed", { jobId: job.id, text: output });
           append(c, "run.completed", { jobId: job.id });
         }
@@ -603,11 +599,9 @@ export class Engine {
     } finally {
       harness?.dispose();
       this.active.delete(key);
+      // Confirm ownership once more: a stale owner must not report success.
       if (!stale)
-        await this.fenced(owner, id, fence, (c) => {
-          const current = c.jobs.find((j) => j.id === job.id);
-          if (current && !this.stopped) recordPiOutcome(c, job.id, current.status);
-        }).catch((error) => {
+        await this.fenced(owner, id, fence, () => undefined).catch((error) => {
           if (!(error instanceof StaleOwnerError)) throw error;
           stale = true;
         });

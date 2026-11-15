@@ -6,7 +6,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   PostgresStore,
   SqliteStore,
@@ -16,7 +15,7 @@ import {
   type Store,
 } from "./store.ts";
 import { Engine } from "./engine.ts";
-import { FixtureHarness, PiHarness } from "./harness.ts";
+import { FixtureHarness } from "./harness.ts";
 import { FixtureSandbox, SandboxBroker } from "./sandbox.ts";
 import { api } from "./api.ts";
 
@@ -336,58 +335,6 @@ test(
       closeStreams();
       await engine.stop();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      await store.close();
-      await rm(dir, { recursive: true });
-    }
-  },
-);
-
-test(
-  "real Pi SDK registers only sandbox tools and routes a registered write through the broker",
-  { timeout: 20_000 },
-  async () => {
-    const dir = await mkdtemp(join(tmpdir(), "pi-sdk-")),
-      store = new SqliteStore(join(dir, "state.sqlite"));
-    let pi: PiHarness | undefined;
-    try {
-      await store.create(initial("sdk", "alice"));
-      const provider = new FixtureSandbox(),
-        broker = new SandboxBroker(store, provider);
-      pi = await PiHarness.create(broker, "alice", "sdk", join(dir, "host-control"));
-      const session = (pi as unknown as { session: AgentSession }).session;
-      // Pi's built-ins are disabled; grep/find/ls are the sandbox versions with the same names.
-      const sandboxed = [
-        "bash",
-        "edit",
-        "find",
-        "grep",
-        "html_preview",
-        "html_render",
-        "ls",
-        "read",
-        "share_port",
-        "unshare_port",
-        "write",
-      ];
-      assert.deepEqual(session.getActiveToolNames().sort(), sandboxed);
-      assert.deepEqual(session.getCallableToolNames().sort(), sandboxed);
-      for (const name of sandboxed)
-        assert.equal(
-          session.getToolDefinition(name)!.description,
-          TOOL_DESCRIPTIONS[name as keyof typeof TOOL_DESCRIPTIONS],
-        );
-      const write = session.getToolDefinition("write")!;
-      await write.execute(
-        "sdk-write",
-        { path: "sdk.txt", content: "SDK boundary checked" },
-        undefined,
-        undefined,
-        {} as never,
-      );
-      assert.equal((await read(store, "alice", "sdk")).files["sdk.txt"], "SDK boundary checked");
-      assert.equal(provider.allocations, 1);
-    } finally {
-      pi?.dispose();
       await store.close();
       await rm(dir, { recursive: true });
     }

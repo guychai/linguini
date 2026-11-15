@@ -394,6 +394,20 @@ export class SandboxBroker {
       return recovered;
     });
   }
+  /**
+   * The policy checks execute() makes before anything runs, with no effect: known tool, ledger
+   * not blocked, the host-tool registry's destinations and the owner's entitlement. Harness hooks
+   * call it for every tool task, nested ones included (code mode), so a refused call never
+   * reaches a tool body. execute() still checks everything again; this is an earlier gate.
+   */
+  async preflight(owner: string, id: string, tool: string, args: Record<string, unknown>) {
+    if (typeof tool !== "string" || !Object.hasOwn(this.policies, tool))
+      throw new ApiError(400, "Invalid tool call");
+    const c = await read(this.store, owner, id);
+    assertNotBlocked(c);
+    if (this.hostTools?.has(tool)) this.checkHost(c, { id: "preflight", tool, args });
+    this.entitled?.(c, tool);
+  }
   private policy(tool: string): ToolPolicy {
     const policy = this.policies[tool];
     if (!policy) throw new ApiError(400, "Invalid tool call");

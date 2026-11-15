@@ -21,7 +21,7 @@ import { Gate, LocalRenderer } from "./render-worker.ts";
 import type { Renderer } from "./render-worker.ts";
 import type { RenderJob } from "./render-browser.ts";
 import { DEFAULT_TOOL_POLICIES } from "./ledger.ts";
-import { TOOL_DESCRIPTIONS, sandboxTools } from "./pi-tools.ts";
+import { TOOL_DESCRIPTIONS, toolSchemas } from "./pi-tools.ts";
 import { persisted } from "./sandbox.ts";
 import { sandboxSystemPrompt } from "./sandbox-prompt.ts";
 import { ApiError, SqliteStore } from "./store.ts";
@@ -69,29 +69,16 @@ test("vendored theme bootstrap matches upstream (packages/shared/src/htmlRender.
   assert.equal(vendor.HTML_RENDER_MAX_HEIGHT, upstream.HTML_RENDER_MAX_HEIGHT);
 });
 
-test("tools: declared, described, ledgered; screenshots reach the model but are never persisted", async () => {
+test("tools: declared, described, ledgered; screenshots are never persisted", async () => {
   for (const name of ["html_preview", "html_render"] as const) {
     assert.ok(DEFAULT_TOOL_POLICIES[name], name);
     assert.equal(DEFAULT_TOOL_POLICIES[name]!.egress, false);
     assert.match(TOOL_DESCRIPTIONS[name], /no network/);
   }
   assert.equal(DEFAULT_TOOL_POLICIES.html_preview!.replay, "safe-read");
-  const tools = sandboxTools(async () => ({
-    text: "{}",
-    images: [{ mimeType: "image/png", data: "AAAA" }],
-  }));
-  const preview = tools.find((t) => t.name === "html_preview")!;
-  const out = await preview.execute(
-    "c1",
-    { html: "<p>x</p>" },
-    undefined,
-    undefined,
-    undefined as never,
-  );
-  assert.deepEqual(out.content, [
-    { type: "text", text: "{}" },
-    { type: "image", data: "AAAA", mimeType: "image/png" },
-  ]);
+  // Both are offered to the model with a schema (the Durable harness registers them).
+  const schemas = toolSchemas();
+  assert.ok(schemas.html_preview && schemas.html_render);
   assert.deepEqual(persisted({ text: "t", images: [{ mimeType: "image/png", data: "x" }] }), {
     text: "t",
   });

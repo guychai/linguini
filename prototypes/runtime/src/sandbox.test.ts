@@ -6,9 +6,6 @@ import { join } from "node:path";
 import { once } from "node:events";
 import { SqliteStore, initial, read } from "./store.ts";
 import { SandboxBroker, FixtureSandbox, type SandboxProvider } from "./sandbox.ts";
-import { gateway } from "./gateway.ts";
-import { issueCapability } from "./capability.ts";
-import { sandboxTools } from "./pi-tools.ts";
 
 test("owner isolation and lazy allocation survive duplicate and conflicting commands", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sandbox-test-"));
@@ -96,80 +93,6 @@ test("ambiguous remote outcomes are not replayed", async () => {
     );
     assert.equal(calls, 1);
   } finally {
-    await store.close();
-    await rm(dir, { recursive: true });
-  }
-});
-
-test("Pi registered tools reach the gateway; capabilities cannot change owners; reconnect replays receipts", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "sandbox-http-"));
-  const store = new SqliteStore(join(dir, "state.sqlite"));
-  const key = "test-only-capability-signing-key-000000000";
-  const broker = new SandboxBroker(store, new FixtureSandbox());
-  const server = gateway(broker, key);
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-  const url = `http://127.0.0.1:${address.port}`;
-  const capability = issueCapability(key, "alice", "a");
-  const request = async (route: string, input: unknown, token = capability) =>
-    fetch(`${url}${route}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(input),
-    });
-  try {
-    const tools = sandboxTools(async (call) => {
-      const response = await request("/tools", call);
-      assert.equal(response.status, 200);
-      return await response.json();
-    });
-    const write = tools.find((t) => t.name === "write")!;
-    await write.execute(
-      "pi-write",
-      { path: "hello.txt", content: "Hello sandbox" },
-      undefined,
-      undefined,
-      {} as never,
-    );
-    const reader = tools.find((t) => t.name === "read")!;
-    const result = await reader.execute(
-      "pi-read",
-      { path: "hello.txt" },
-      undefined,
-      undefined,
-      {} as never,
-    );
-    assert.equal(result.content[0]?.type, "text");
-    assert.equal((result.content[0] as { text: string }).text, "Hello sandbox");
-    const retry = await request("/tools", {
-      id: "pi-write",
-      tool: "write",
-      args: { path: "hello.txt", content: "Hello sandbox" },
-    });
-    assert.equal(retry.status, 200);
-    assert.equal((await request("/tools", {}, `${capability}tamper`)).status, 401);
-    assert.equal(
-      (
-        await request(
-          "/tools",
-          { id: "steal", tool: "read", args: { path: "hello.txt" } },
-          issueCapability(key, "bob", "b"),
-        )
-      ).status,
-      404,
-    );
-    await request("/tools", {
-      id: "prod",
-      tool: "bash",
-      args: { command: "fixture:production-read" },
-    });
-    for (const route of ["/actions/create-pr", "/actions/publish"])
-      assert.equal((await request(route, {})).status, 501);
-    assert.equal((await request("/terminal", {})).status, 404);
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
     await store.close();
     await rm(dir, { recursive: true });
   }

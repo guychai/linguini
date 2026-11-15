@@ -23,6 +23,7 @@ test(
         env: {
           ...process.env,
           DATABASE_URL: database,
+          HARNESS_MODE: "fixture",
           OWNER_TOKENS: JSON.stringify({ [token]: owner }),
           OWN_PORT: String(port),
           OWN_LEASE_MS: "1500",
