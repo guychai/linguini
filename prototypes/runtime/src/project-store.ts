@@ -15,7 +15,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type { ProjectService } from "./projects.ts";
-import { ApiError, append, read, type Store } from "./store.ts";
+import { ApiError, append, markSensitive, read, type Store } from "./store.ts";
 
 export const ARTIFACT_MAX_BYTES = 1024 * 1024;
 export const GRANT_DIR = ".project";
@@ -240,13 +240,7 @@ export class ProjectArtifacts {
     const files = this.files();
     if (a.sensitive)
       await this.o.store.mutate(actor, conversationId, (conv) => {
-        if (conv.tainted) return;
-        conv.tainted = true;
-        append(conv, "taint.changed", {
-          tainted: true,
-          reason: "store.grant",
-          artifactId: a.id,
-        });
+        markSensitive(conv, "store.grant", { artifactId: a.id });
       });
     await files.put(actor, conversationId, a.name, a.content);
     await this.o.store.mutate(actor, conversationId, (conv) => {
