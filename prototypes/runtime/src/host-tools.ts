@@ -43,6 +43,12 @@ export interface HostTool {
   /** Deployment-specific allowlist for a destination (e.g. repos the App is installed on). */
   permit?(destination: WriteDestination, ctx: HostToolContext): boolean;
   handler(call: ToolCall, run: HostToolRun): Promise<ToolResult>;
+  /**
+   * Model-facing description and JSON-schema parameters, for tools that are not sandbox tools
+   * (pi-tools.ts has those). A host tool without them is not offered to the model.
+   */
+  description?: string;
+  parameters?: object;
 }
 
 export class HostToolRegistry {

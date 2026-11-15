@@ -1,5 +1,6 @@
 import { HostToolRegistry, previewHostTools, visualHostTools } from "./host-tools.ts";
 import { EgressLog } from "./egress-log.ts";
+import { FakeTrino, trinoHostTool, trinoHostsFromEnv } from "./trino.ts";
 import { readFile } from "node:fs/promises";
 import { validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
 import { resolve } from "node:path";
@@ -74,7 +75,9 @@ const previewGrantKey = auth
 const egressDenyHosts = (process.env.EGRESS_DENY_HOSTS ?? "")
   .split(",")
   .map((h) => h.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  // The warehouse (TRINO_URL's host) is denied even when EGRESS_DENY_HOSTS omits it.
+  .concat(trinoHostsFromEnv(process.env));
 // Both rule files are validated at startup (egress-rules.ts): registries GET/HEAD only, no stale
 // allowWhenTainted, no denied host.
 const egressRules: Record<string, EgressRule[]> = process.env.EGRESS_RULES_FILE
@@ -263,6 +266,15 @@ const hostTools = new HostToolRegistry({
           return undefined;
         },
       })
+    : {}),
+  // trino_query: placeholder backend only (TRINO_MODE=fake); the HTTP client is not wired in v1.
+  ...(process.env.TRINO_MODE === "fake"
+    ? {
+        trino_query: trinoHostTool({
+          client: new FakeTrino(),
+          emailOf: async (owner) => auth?.emailOf(owner),
+        }),
+      }
     : {}),
   ...(kataHands
     ? visualHostTools({

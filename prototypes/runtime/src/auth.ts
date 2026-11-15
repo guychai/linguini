@@ -62,6 +62,8 @@ export interface LinguiniAuth {
   /** Name of the session cookie (never forwarded to preview apps; see preview.ts). */
   cookiePrefix: string;
   admin: AdminAuth;
+  /** A user's email by id (trino_query's principal), or undefined when there is no such user. */
+  emailOf(userId: string): Promise<string | undefined>;
 }
 export interface AuthConfig {
   secret: string;
@@ -189,6 +191,10 @@ export async function createAuth(config: AuthConfig): Promise<LinguiniAuth> {
     trustedOrigins: options.trustedOrigins,
     cookiePrefix: COOKIE_PREFIX,
     admin: adminOps,
+    async emailOf(userId) {
+      const u = await ctx.internalAdapter.findUserById(userId);
+      return typeof u?.email === "string" ? u.email : undefined;
+    },
     handle: (request, response) => handler(request, response),
     async user(request) {
       if (!request.headers.cookie?.includes(COOKIE_PREFIX)) return null;
