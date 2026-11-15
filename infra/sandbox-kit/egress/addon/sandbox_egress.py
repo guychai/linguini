@@ -25,7 +25,8 @@ Sensitive flag (V1.1c): serving a private repository with an App token makes the
 sensitive. The proxy writes `<sensitive_dir>/<key>` before forwarding, treats the conversation as
 tainted from then on, and the backend picks the marker up and sets its own flag. A sensitive
 conversation reaches GitHub only for installed private repositories (App token), never public
-ones or other GitHub requests.
+ones or other GitHub requests. If private-repo reads are the only reason (policy taintScope
+"private-repo"), package-registry GET/HEAD stays open (REGISTRY_READ_SUFFIXES; capped, scanned).
 """
 
 

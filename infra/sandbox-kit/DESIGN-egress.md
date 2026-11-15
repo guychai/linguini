@@ -342,3 +342,22 @@ In v1 only the fake backend is wired (`TRINO_MODE=fake`); there is no real wareh
 8. **Scale.** The prototype has one mitmproxy process per node, and the policy is re-read per
    decision (small JSON files, kept simple on purpose). Measure on the VM before relying on it
    for heavy traffic.
+
+## Private-repo sensitivity: registry reads stay open (Q1 loosening, droppable)
+
+A conversation that turned sensitive only because it read private repositories gets the policy
+field `"taintScope": "private-repo"` (backend `Conversation.taintScope`, set by `markSensitive`;
+the proxy's own marker counts the same way). Then the proxy still admits **GET/HEAD to package
+registries listed in the conversation's rules** (npm, Yarn, PyPI and files.pythonhosted.org,
+Docker Hub incl. its `*.docker.com` blob CDN), with no body, a tighter target cap (1024 URL /
+512 query, rule overrides ignored) and the usual URL/header credential scan. Everything else the
+flag blocks stays blocked: public GitHub repositories and other GitHub requests (only installed
+private repos), other listed hosts, new hosts (open-web tier), any write method or body, previews
+and publication (backend). `allowWhenTainted` stays refused on registries; this is a separate,
+GET-only path for this one case.
+
+Any other reason (production data, unknown provenance, a sensitive store grant, late evidence)
+clears the scope for good (`taint.changed` with `scope: "full"`), closing registries again.
+Residual risk accepted: data could ride in a package name in a registry GET path (capped).
+Older proxies ignore `taintScope` and stay fully strict.
+
