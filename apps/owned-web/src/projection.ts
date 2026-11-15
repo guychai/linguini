@@ -4,6 +4,7 @@ import * as C from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "../../../packages/shared/src/keybindings.ts";
 import * as Schema from "effect/Schema";
 import type { Conversation, Job } from "./adapter.ts";
+import { setGeneratedContentTainted } from "../../web/src/lib/generatedContentTaint.ts";
 let harnessLabel = "Pi (deterministic fixture)";
 export function configureHarness(info: { harness?: string; model?: string }) {
   if (info.harness === "pi") {
@@ -145,6 +146,9 @@ export function jobTiming(c: Conversation, job: Job, events = c.events) {
   return { requestedAt, startedAt, completedAt, lastActivity };
 }
 export function projection(c: Conversation) {
+  // Every conversation the UI shows passes through here: tell markdown rendering which threads
+  // are sensitive, so their links render inert (apps/web/src/components/chat/linguiniGeneratedLinks.tsx).
+  setGeneratedContentTainted(c.id, c.tainted);
   const date = c.createdAt ?? DATE,
     updated = c.updatedAt ?? date;
   const thread = {
