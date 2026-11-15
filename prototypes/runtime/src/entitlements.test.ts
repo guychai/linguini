@@ -180,7 +180,7 @@ test("broker: trino_query refused without an entitlement (execute and preflight)
     "root",
   );
   await call("alice");
-  assert.equal(fake.queries.at(-1)!.principal, "alice");
+  assert.equal((fake.queries as Array<{ principal: string }>).at(-1)!.principal, "alice");
   await assert.rejects(call("bob"), { code: "entitlement_denied" });
   // A project deny narrows alice inside that project only.
   await ent.replace({ projectId: "p1" }, [{ object: trino, effect: "deny" }], "alice");
