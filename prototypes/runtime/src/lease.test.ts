@@ -185,7 +185,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
           new GatedHarness(new SandboxBroker(storeA, remote), o, i, j, fence, parkedA, (r) =>
             outcomes.push(r),
           ),
-        { worker: "A", heartbeatMs: 0, leaseMs: 1000 },
+        { worker: "A", heartbeatMs: 0, leaseMs: 10_000 },
       );
       const B = new Engine(
         storeB,
@@ -199,7 +199,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
             parkedB,
             () => undefined,
           ),
-        { worker: "B", heartbeatMs: 0, leaseMs: 1000 },
+        { worker: "B", heartbeatMs: 0, leaseMs: 10_000 },
       );
       try {
         await storeA.create(initial(id, owner));
@@ -208,10 +208,10 @@ for (const kind of ["sqlite", "postgres"] as const) {
           c.events.some((e) => e.type === "gated.waiting" && e.data.jobId === "first"),
         );
         assert.equal((await read(storeA, owner, id)).lease?.epoch, 1);
-        // Renewal keeps ownership while A is healthy.
-        advance(900);
+        // Renewal keeps ownership while A is healthy. (10 s lease, 1 s of real-time slack for slow CI.)
+        advance(9000);
         assert.equal(await A.heartbeat(owner, id), true);
-        advance(900);
+        advance(9000);
         await B.sweep(owner);
         await B.idle(owner, id);
         assert.equal(
@@ -220,7 +220,7 @@ for (const kind of ["sqlite", "postgres"] as const) {
           "renewed lease is not stolen",
         );
         // A pauses (no heartbeats); its lease expires and B takes over.
-        advance(1001);
+        advance(10_001);
         await B.sweep(owner);
         await B.idle(owner, id);
         const taken = await until(storeA, owner, id, (c) => c.epoch === 2);

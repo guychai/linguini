@@ -25,6 +25,7 @@ import {
 import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
 import type { ProjectService } from "./projects.ts";
+import type { ProjectArtifacts } from "./project-store.ts";
 import { projectHttp } from "./projects-api.ts";
 import {
   effectiveModel,
@@ -102,6 +103,8 @@ export function api(
     };
     /** Projects (projects.ts, PROJECTS=1); absent: /api/projects* is a 404 and projectId refused. */
     projects?: ProjectService;
+    /** Project store (project-store.ts, V1.5); absent: store and grant routes are 404. */
+    projectArtifacts?: ProjectArtifacts;
     /** Conversation deletion (deletion.ts); absent: DELETE is a 501. */
     deleter?: Pick<ConversationDeleter, "tombstone" | "finish">;
     terminals?: TerminalManager;
@@ -449,7 +452,7 @@ export function api(
         });
         return;
       }
-      if (options.projects && (await projectHttp(options.projects, owner, request, url, json)))
+      if (options.projects && (await projectHttp(options.projects, owner, request, url, json, options.projectArtifacts)))
         return;
       if (url.pathname === "/api/conversations") {
         if (request.method === "GET") {
