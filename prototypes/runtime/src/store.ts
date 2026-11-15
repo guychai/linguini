@@ -40,6 +40,8 @@ export interface Conversation {
    * (durable-harness.ts). Set once, on the thread's first Durable turn; never changes after.
    */
   harness?: "durable";
+  /** Project the thread belongs to (V1.4); absent: a private thread outside any project. */
+  projectId?: string;
   metadata?: {
     archivedAt?: string | null;
     pinnedAt?: string | null;
