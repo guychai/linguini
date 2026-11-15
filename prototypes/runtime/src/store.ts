@@ -34,6 +34,12 @@ export interface Conversation {
    * engine, which tells Pi about them at the start of its next turn. */
   userEdits?: string[];
   piEntries?: FileEntry[];
+  /**
+   * Which model harness owns this thread's transcript. Absent: the Pi coding-agent harness
+   * (`piEntries`). "durable": Pi Durable, whose transcript lives in its own SQLite file
+   * (durable-harness.ts). Set once, on the thread's first Durable turn; never changes after.
+   */
+  harness?: "durable";
   metadata?: {
     archivedAt?: string | null;
     pinnedAt?: string | null;

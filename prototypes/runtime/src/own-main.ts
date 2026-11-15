@@ -18,6 +18,13 @@ import {
   type EgressRule,
 } from "./hands.ts";
 import { FixtureHarness, PiHarness } from "./harness.ts";
+import {
+  DurableHarness,
+  DurableStore,
+  chooseHarness,
+  durableModels,
+  type HarnessMode,
+} from "./durable-harness.ts";
 import { sandboxSystemPrompt } from "./sandbox-prompt.ts";
 import { githubAppAccessFromEnv } from "./github.ts";
 import { Engine } from "./engine.ts";
@@ -36,7 +43,7 @@ import {
   previewEnvFile,
   previewToolHandler,
 } from "./preview.ts";
-import { append } from "./store.ts";
+import { append, read } from "./store.ts";
 import { ConversationDeleter } from "./deletion.ts";
 import { AccountAdmin } from "./accounts.ts";
 import { sandboxQuota, type HandsBinding } from "./hands.ts";
@@ -278,26 +285,55 @@ const broker = new SandboxBroker(store, provider, {
 });
 // Model-facing description of the sandbox; allowed hosts come from the node's default rules.
 const systemPrompt = sandboxSystemPrompt(defaultEgressRules);
-const livePi = process.env.HARNESS_MODE === "pi";
+// HARNESS_MODE: unset = deterministic fixture; "pi" = Pi coding-agent; "durable" = Pi Durable
+// for new threads (older threads keep the Pi harness; see durable-harness.ts chooseHarness).
+const harnessMode: HarnessMode =
+  process.env.HARNESS_MODE === "durable"
+    ? "durable"
+    : process.env.HARNESS_MODE === "pi"
+      ? "pi"
+      : "fixture";
+const livePi = harnessMode !== "fixture";
+if (harnessMode === "durable") {
+  // @earendil-works/pi-durable declares engines.node >=22.19.0 (node:sqlite, worker threads).
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major! < 22 || (major === 22 && minor! < 19))
+    throw new Error(`HARNESS_MODE=durable needs Node >= 22.19 (this is ${process.versions.node})`);
+}
 const hostDir = resolve(process.env.PI_HOST_DIR ?? "../../.t3/own/host-control");
+// Durable transcripts: one SQLite file per conversation. Every worker that can take a
+// conversation's lease must see the same directory (one host, or a shared volume).
+const durableStore = new DurableStore(
+  resolve(process.env.PI_DURABLE_DIR ?? resolve(hostDir, "durable")),
+);
+let durableModelsCache: ReturnType<typeof durableModels> | undefined;
 // Several workers may share one database: each conversation is owned through a
 // renewable lease with a monotonic epoch, and every write is fenced by it.
 const leaseMs = Number(process.env.OWN_LEASE_MS ?? 30_000);
 const engine = new Engine(
   store,
-  async (owner, id, jobId, fence) =>
-    livePi
-      ? PiHarness.create(
-          broker,
-          owner,
-          id,
-          hostDir,
-          jobId,
-          fence,
-          systemPrompt,
-          users ? effectiveModel(await users.settings(owner), settingsPolicy) : {},
-        )
-      : new FixtureHarness(broker, owner, id, jobId, fence),
+  async (owner, id, jobId, fence) => {
+    const mode = chooseHarness(await read(store, owner, id), jobId, harnessMode);
+    if (mode === "fixture") return new FixtureHarness(broker, owner, id, jobId, fence);
+    const overrides = users ? effectiveModel(await users.settings(owner), settingsPolicy) : {};
+    if (mode === "pi")
+      return PiHarness.create(broker, owner, id, hostDir, jobId, fence, systemPrompt, overrides);
+    return DurableHarness.create({
+      broker,
+      owner,
+      id,
+      jobId,
+      fence,
+      store: durableStore,
+      models: (durableModelsCache ??= durableModels(resolve(hostDir, "pi-config", "auth.json"))),
+      model: {
+        provider: process.env.PI_PROVIDER ?? "anthropic",
+        modelId: overrides.model ?? process.env.PI_MODEL ?? "claude-sonnet-4-5",
+      },
+      thinkingLevel: overrides.thinkingLevel ?? process.env.PI_THINKING_LEVEL,
+      systemPrompt,
+    });
+  },
   // Unique per process by default (hostname:port:<random>); see worker-id.ts.
   {
     worker: workerId(),
@@ -412,6 +448,7 @@ const deleter = new ConversationDeleter(
     ...(snapshotBucket ? { snapshots: snapshotBucket } : {}),
     local: async (owner, id) => {
       await engine.forget(owner, id);
+      await durableStore.remove(owner, id);
       terminals?.close(owner, id);
       previewActivity.forget(owner, id);
       fileActivity.forget(owner, id);
@@ -480,7 +517,7 @@ const { server, closeStreams } = api(
 );
 server.listen(Number(process.env.OWN_PORT ?? 43220), process.env.OWN_HOST ?? "127.0.0.1", () =>
   console.log(
-    `Owned backend ready (${livePi ? "live host Pi" : "deterministic harness fixture"}, ${provider.kind}, Postgres)`,
+    `Owned backend ready (${harnessMode === "durable" ? "Pi Durable for new threads" : livePi ? "live host Pi" : "deterministic harness fixture"}, ${provider.kind}, Postgres)`,
   ),
 );
 let shuttingDown = false;
