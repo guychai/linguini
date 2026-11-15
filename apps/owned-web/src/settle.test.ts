@@ -8,7 +8,6 @@ const calls: { url: string; body: unknown }[] = [];
 const conversation = {
   id: "one",
   title: "t",
-  tainted: false,
   jobs: [],
   events: [],
   metadata: {
@@ -21,7 +20,6 @@ const conversation = {
 const other = {
   id: "two",
   title: "u",
-  tainted: false,
   jobs: [],
   events: [{ seq: 500, type: "metadata.updated", data: {} }],
 };

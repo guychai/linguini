@@ -146,15 +146,12 @@ const previewTools = previewPorts
       record: async (o, i, type, data) => {
         await store.mutate(o, i, (c) => void append(c, type, data));
       },
-      tainted: async (o, i) => (await store.snapshot(o, i, { events: false })).tainted === true,
     })
   : undefined;
 /** Keep the sandbox's preview env file and preview-url helper current (no ledger: not a tool). */
 const installPreviewEnv = async (owner: string, id: string, b: HandsBinding) => {
   if (!previewPorts || !b.allocId) return;
-  // A tainted conversation's shares are refused by the proxy; the sandbox stops advertising them.
-  const tainted = (await store.snapshot(owner, id, { events: false })).tainted === true;
-  const ports = tainted ? [] : (await previewPorts.list(owner, id)).map((p) => p.port);
+  const ports = (await previewPorts.list(owner, id)).map((p) => p.port);
   const r = await handsTransport.exec(b, {
     execId: `preview-env-${b.jobId}-${Date.now()}`,
     epoch: 0,
@@ -309,14 +306,11 @@ const sweeper = setInterval(() => {
 }, leaseMs);
 const idleMs = parseDuration(process.env.SANDBOX_IDLE_TIMEOUT);
 // User terminals run inside the conversation's Kata sandbox (Nomad exec TTY). User-only: Pi has
-// no access and terminal use does not taint; logs carry open/close and byte counts only.
+// no access; logs carry open/close and byte counts only.
 const terminals =
   provider instanceof HandsSandbox
     ? new TerminalManager({
-        prepare: async (owner, id) => {
-          const c = await store.snapshot(owner, id, { events: false });
-          return provider.prepareInteractive(owner, id, c.tainted === true);
-        },
+        prepare: (owner, id) => provider.prepareInteractive(owner, id),
         connector: new NomadExecConnector(process.env.NOMAD_ADDR ?? "http://127.0.0.1:4646"),
         perConversation: Number(process.env.TERMINALS_PER_CONVERSATION) || 4,
         perNode: Number(process.env.TERMINALS_PER_NODE) || 16,
@@ -329,10 +323,7 @@ const fileActivity = new PreviewActivity();
 const files =
   provider instanceof HandsSandbox && kataHands
     ? new SandboxFiles({
-        prepare: async (owner, id) => {
-          const c = await store.snapshot(owner, id, { events: false });
-          return provider.prepareInteractive(owner, id, c.tainted === true);
-        },
+        prepare: (owner, id) => provider.prepareInteractive(owner, id),
         exec: (owner, id, request) => kataHands!.exec(owner, id, request),
         touch: (owner, id) => fileActivity.touch(owner, id),
         // Remembered for Pi's next turn (engine prepends a note); not a tool call, not ledgered.
@@ -441,9 +432,7 @@ const { server, closeStreams } = api(
                 ports: previewPorts,
                 targets: { address: (o, i) => kataHands!.address(o, i) },
                 activity: previewActivity,
-                conversationState: async (o, i) => ({
-                  tainted: (await store.snapshot(o, i, { events: false })).tainted === true,
-                }),
+                conversationExists: (o, i) => store.snapshot(o, i, { events: false }),
                 resolveOwner,
                 ...(previewGrantKey ? { grantKey: previewGrantKey } : {}),
               }),

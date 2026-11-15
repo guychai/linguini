@@ -378,7 +378,8 @@ export function rewriteSetCookie(value: string, prefix: string): string | null {
  * Sent on every preview document response (not on a 101 upgrade). `sandbox` gives the page an
  * opaque origin (no Linguini cookies or storage); the fetch directives keep its scripts from
  * reaching anything but the preview itself (no third-party fetch, image beacon or form post).
- * CSP cannot stop top-level navigation: refusing tainted conversations (P0.1) is the real control.
+ * `sandbox` without allow-top-navigation / allow-popups keeps the page from navigating the tab or
+ * opening windows; only authenticated users who can see the conversation reach it at all.
  */
 export const PREVIEW_CSP =
   "sandbox allow-scripts allow-forms; default-src 'self' data: blob:; connect-src 'self'; " +
@@ -460,11 +461,10 @@ export interface PreviewProxyOptions {
   targets: PreviewTargets;
   activity: PreviewActivity;
   /**
-   * The conversation's current state; rejects when it does not exist (404). A tainted
-   * conversation's previews are refused (403 `preview_tainted`), including ports shared while it
-   * was still clean, and open preview connections are closed once it becomes tainted.
+   * Resolves when the conversation exists for this user, rejects otherwise (404). Open preview
+   * connections are closed once it is gone (deleted).
    */
-  conversationState(owner: string, id: string): Promise<{ tainted: boolean }>;
+  conversationExists(owner: string, id: string): Promise<unknown>;
   resolveOwner(request: IncomingMessage): Promise<string | undefined> | string | undefined;
   timeoutMs?: number;
   /** How long the sandbox app may take to answer a WebSocket handshake. */
@@ -473,11 +473,9 @@ export interface PreviewProxyOptions {
   grantKey?: Buffer;
   /** Test seam; production accepts only sandbox network addresses (10.x). */
   allowTarget?: (host: string) => boolean;
-  /** How often an open preview connection re-checks taint (default 5 s). */
-  taintRecheckMs?: number;
+  /** How often an open preview connection re-checks that its conversation still exists (5 s). */
+  goneRecheckMs?: number;
 }
-export const PREVIEW_TAINTED_MESSAGE =
-  "Previews are disabled in this conversation because it has read sensitive data";
 const notFound = (res: ServerResponse) => {
   res.writeHead(404, {
     "content-type": "text/plain",
@@ -497,13 +495,11 @@ export class PreviewProxy {
     if (!owner && this.o.grantKey)
       owner = verifyGrant(this.o.grantKey, request.headers.cookie, p.conversationId, p.port);
     if (!owner) throw new ApiError(401, "Authentication required");
-    let state;
     try {
-      state = await this.o.conversationState(owner, p.conversationId);
+      await this.o.conversationExists(owner, p.conversationId);
     } catch {
       return null;
     }
-    if (state.tainted) throw new ApiError(403, PREVIEW_TAINTED_MESSAGE, "preview_tainted");
     const shared = await this.o.ports.get(owner, p.conversationId, p.port);
     if (!shared) return null;
     const prefix = `/preview/${p.conversationId}/${p.port}/`;
@@ -521,21 +517,19 @@ export class PreviewProxy {
     return { ...p, owner, shared, prefix, grant };
   }
   /**
-   * While a preview connection is open, re-check the conversation; `close` runs once it is tainted
-   * or gone. Returns the stop function.
+   * While a preview connection is open, re-check the conversation; `close` runs once it is gone.
+   * Returns the stop function.
    */
-  private watchTaint(owner: string, id: string, close: () => void) {
+  private watchGone(owner: string, id: string, close: () => void) {
     let stopped = false;
     const timer = setInterval(() => {
-      this.o.conversationState(owner, id).then(
-        (s) => {
-          if (s.tainted && !stopped) close();
-        },
+      this.o.conversationExists(owner, id).then(
+        () => undefined,
         () => {
           if (!stopped) close();
         },
       );
-    }, this.o.taintRecheckMs ?? 5_000);
+    }, this.o.goneRecheckMs ?? 5_000);
     timer.unref();
     return () => {
       stopped = true;
@@ -586,9 +580,9 @@ export class PreviewProxy {
       headers: forwardRequestHeaders(request.headers, r.prefix),
       timeout: this.o.timeoutMs ?? 120_000,
     });
-    // A long response (event stream, slow download) stops when the conversation becomes tainted.
-    const stopWatch = this.watchTaint(r.owner, r.conversationId, () => {
-      upstream.destroy(new Error("conversation tainted"));
+    // A long response (event stream, slow download) stops when the conversation is deleted.
+    const stopWatch = this.watchGone(r.owner, r.conversationId, () => {
+      upstream.destroy(new Error("conversation deleted"));
       response.destroy();
     });
     response.on("close", stopWatch);
@@ -651,8 +645,8 @@ export class PreviewProxy {
     const { owner, conversationId, prefix } = r;
     this.o.activity.opened(owner, conversationId);
     let closed = false;
-    // An open preview socket is closed once the conversation becomes tainted (or is deleted).
-    const stopWatch = this.watchTaint(owner, conversationId, () => done());
+    // An open preview socket is closed once the conversation is deleted.
+    const stopWatch = this.watchGone(owner, conversationId, () => done());
     const done = () => {
       if (closed) return;
       closed = true;
@@ -770,11 +764,6 @@ export function previewToolHandler(o: {
     type: string,
     data: Record<string, unknown>,
   ): Promise<void>;
-  /**
-   * Whether the conversation is tainted. Sharing is refused then (403 `preview_tainted`, nothing
-   * stored), and the env file lists no ports. Unsharing still works.
-   */
-  tainted(owner: string, conversationId: string): Promise<boolean>;
 }) {
   return async (
     owner: string,
@@ -783,10 +772,8 @@ export function previewToolHandler(o: {
   ) => {
     const port = validPort(call.args.port);
     const base = o.baseUrl(id);
-    const tainted = await o.tainted(owner, id);
     let text: string;
     if (call.tool === "share_port") {
-      if (tainted) throw new ApiError(403, PREVIEW_TAINTED_MESSAGE, "preview_tainted");
       const p = await o.ports.share(owner, id, {
         port,
         ...(call.args.label === undefined ? {} : { label: String(call.args.label) }),
@@ -807,7 +794,7 @@ export function previewToolHandler(o: {
       if (removed) await o.record(owner, id, "preview.unshared", { port });
       text = removed ? `Port ${port} is no longer shared.` : `Port ${port} was not shared.`;
     }
-    const ports = tainted ? [] : (await o.ports.list(owner, id)).map((p) => p.port);
+    const ports = (await o.ports.list(owner, id)).map((p) => p.port);
     return { text, envFile: previewEnvFile(base, ports) };
   };
 }

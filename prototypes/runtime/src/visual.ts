@@ -277,7 +277,6 @@ export class VisualReplies {
           screenshot: { mimeType: "image/png", width, height: c.capturedHeight },
         }),
         images: [{ mimeType: "image/png", data: c.png }],
-        productionData: false,
       };
     }
     if (call.tool !== "html_render") throw new ApiError(400, "Invalid tool call");
@@ -325,7 +324,6 @@ export class VisualReplies {
         message: RENDER_RESULT_MESSAGE,
         ...missing,
       }),
-      productionData: false,
     };
   }
   private sign(id: string, owner: string, conversationId: string, expiresAt: number) {

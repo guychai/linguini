@@ -2,9 +2,7 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import {
   DEFAULT_TOOL_POLICIES,
-  PUBLICATION_POLICY,
   SAFE_READ_MAX_ATTEMPTS,
-  assertEgressAllowed,
   assertNotBlocked,
   executionId,
   ledgerOf,
@@ -61,7 +59,6 @@ export interface ToolCall {
 }
 export interface ToolResult {
   text: string;
-  productionData?: boolean;
   /** Images for the model only (html_preview's screenshot). Never persisted: see persisted(). */
   images?: Array<{ mimeType: string; data: string }>;
 }
@@ -77,22 +74,13 @@ export interface ExecuteOptions {
   epoch?: number;
   owner?: string;
   conversationId?: string;
-  /** The conversation's taint, read after any taint for this call committed. */
-  tainted?: boolean;
 }
 export interface SandboxProvider {
   readonly kind: "deterministic-fixture" | "remote";
-  /**
-   * "declared": results carry the provenance of the tool's declared destination (a
-   * "sandbox" tool is sandbox work, not production data), so no classify preflight runs.
-   * Absent: a remote provider without classify is treated as unknown provenance (taints).
-   */
-  readonly provenanceSource?: "declared";
   /** "proxy": all network egress of this provider's tools goes through the egress proxy. */
   readonly egressBoundary?: EgressBoundary;
   // Allocation must be idempotent for this owner+conversation key.
   allocate(owner: string, conversationId: string): Promise<string>;
-  classify?(sandbox: string, call: ToolCall): Promise<"ordinary" | "production" | "unknown">;
   /**
    * `idempotencyKey` is set for calls declared idempotent-write: the destination must apply
    * at most one effect per key and answer a repeat with the original result. `execId` and
@@ -120,9 +108,6 @@ export function fingerprint(input: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(canonical(input)))
     .digest("hex");
-}
-export function assertPublicationAllowed(c: Conversation) {
-  assertEgressAllowed(c, PUBLICATION_POLICY, "publication");
 }
 /** A path inside /workspace, normalized and relative. Rejects traversal and absolute escapes. */
 export function sandboxPath(value: unknown): string {
@@ -176,7 +161,7 @@ export function fixtureExecute(c: Conversation, call: ToolCall): ToolResult {
       if (args.command === "pwd") return { text: "/workspace\n" };
       if (args.command === "ls") return { text: Object.keys(c.files).sort().join("\n") };
       if (args.command === "fixture:production-read")
-        return { text: "SYNTHETIC production record", productionData: true };
+        return { text: "SYNTHETIC production record" };
       throw new ApiError(
         501,
         "Fixture supports only pwd, ls and fixture:production-read; no host execution",
@@ -272,7 +257,6 @@ export class FixtureSandbox implements SandboxProvider {
   }
 }
 export class RemoteSandbox implements SandboxProvider {
-  private provenance = new Map<string, "ordinary" | "production" | "unknown">();
   readonly kind = "remote";
   constructor(
     private endpoint: string,
@@ -300,40 +284,25 @@ export class RemoteSandbox implements SandboxProvider {
       throw new ApiError(502, "Invalid allocation response");
     return result.sandboxId;
   }
-  async classify(
-    sandboxId: string,
-    call: ToolCall,
-  ): Promise<"ordinary" | "production" | "unknown"> {
-    // Trusted service preflight; the agent cannot set provenance. No execution is allowed here.
-    const result = await this.request("/classify", { sandboxId, ...call });
-    if (!["ordinary", "production", "unknown"].includes(String(result.dataClass)))
-      throw new ApiError(502, "Invalid provenance response");
-    const classification = result.dataClass as "ordinary" | "production" | "unknown";
-    this.provenance.set(fingerprint([sandboxId, call]), classification);
-    return classification;
-  }
   async execute(
     sandboxId: string,
     call: ToolCall,
     signal?: AbortSignal,
     options: { idempotencyKey?: string } = {},
   ): Promise<ToolResult> {
-    const expectedDataClass = this.provenance.get(fingerprint([sandboxId, call])) ?? "unknown";
     const result = await this.request(
       "/execute",
       {
         sandboxId,
         ...call,
-        expectedDataClass,
         denyExports: true,
         ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
       },
       signal,
     );
     if (typeof result.text !== "string") throw new ApiError(502, "Invalid tool result");
-    // Conservative until an audited ingress provenance contract exists: every
-    // remote result is tainted. The remote service must also deny export egress.
-    return { text: result.text, productionData: result.productionData !== false };
+    // The remote service must deny export egress itself.
+    return { text: result.text };
   }
 }
 export class SandboxBroker {
@@ -441,29 +410,9 @@ export class SandboxBroker {
       return existing.result as ToolResult;
     }
     if (signal?.aborted) throw new ApiError(409, "Cancelled");
-    const boundary = this.provider.egressBoundary ?? "none";
-    // Taint commits before dispatch, even for a stale owner: it only ever restricts.
-    const taint = async (reason: string) => {
-      await this.store.mutate(owner, id, (state) => {
-        if (!state.tainted) {
-          state.tainted = true;
-          append(state, "taint.changed", { tainted: true, reason, callId: call.id });
-        }
-      });
-      c = await read(this.store, owner, id);
-    };
     // Every policy decision that needs no sandbox runs before allocation, so a refused call
-    // never starts a VM: blocked ledger, egress after taint, and declared provenance.
+    // never starts a VM.
     assertNotBlocked(c);
-    assertEgressAllowed(c, policy, call.tool, boundary);
-    const declared = policy.destination === "production" ? "production" : "ordinary";
-    const needsClassify =
-      declared === "ordinary" &&
-      this.provider.kind === "remote" &&
-      this.provider.provenanceSource !== "declared";
-    if (declared === "production") await taint("production");
-    else if (needsClassify && !this.provider.classify) await taint("unknown");
-    assertEgressAllowed(c, policy, call.tool, boundary);
     if (c.sandbox === null) {
       const allocated = await this.provider.allocate(owner, id);
       await this.store.mutate(owner, id, (state) => {
@@ -472,17 +421,6 @@ export class SandboxBroker {
         append(state, "sandbox.allocated", { sandboxId: state.sandbox, kind: this.provider.kind });
       });
       c = await read(this.store, owner, id);
-    }
-    // A trusted service's provenance preflight needs the sandbox, so it runs after allocation.
-    if (needsClassify && this.provider.classify) {
-      let preflightFailure: unknown;
-      const provenance = await this.provider.classify(c.sandbox!, call).catch((error) => {
-        preflightFailure = error;
-        return "unknown" as const;
-      });
-      if (provenance !== "ordinary") await taint(provenance);
-      if (preflightFailure) throw preflightFailure;
-      assertEgressAllowed(c, policy, call.tool, boundary);
     }
     if (signal?.aborted) throw new ApiError(409, "Cancelled before dispatch");
     if (this.provider.kind === "deterministic-fixture")
@@ -504,7 +442,6 @@ export class SandboxBroker {
       const known = state.ledger?.[execId];
       if (known?.status === "observed") return known.observation!;
       assertNotBlocked(state);
-      assertEgressAllowed(state, policy, call.tool, this.provider.egressBoundary);
       const result = fixtureExecute(state, call);
       const entry = this.newEntry(state, call, policy);
       this.observe(state, entry, call, policy, result);
@@ -538,14 +475,6 @@ export class SandboxBroker {
     policy: ToolPolicy,
     result: ToolResult,
   ) {
-    if ((result.productionData || policy.destination === "production") && !state.tainted) {
-      state.tainted = true;
-      append(state, "taint.changed", {
-        tainted: true,
-        reason: policy.destination === "production" ? "production" : "unexpected-production",
-        callId: call.id,
-      });
-    }
     const kept = persisted(result);
     entry.status = "observed";
     entry.observation = kept;
@@ -626,7 +555,6 @@ export class SandboxBroker {
     const intent = await this.store.mutate(owner, id, (state) => {
       assertFence(state, fence);
       assertNotBlocked(state);
-      assertEgressAllowed(state, policy, call.tool, this.provider.egressBoundary);
       let entry = state.ledger?.[execId];
       if (entry && entry.status !== "intent") return structuredClone(entry);
       if (entry) {
@@ -675,7 +603,6 @@ export class SandboxBroker {
         epoch: intent.epoch,
         owner,
         conversationId: id,
-        tainted: current.tainted,
       });
     } catch (error) {
       // A 4xx from the provider is a definite rejection. Anything else (network, 5xx,
@@ -728,15 +655,6 @@ export class SandboxBroker {
         currentEpoch: state.epoch ?? 0,
         status: e.status,
       });
-      // Taint only ever restricts, so production data in late evidence still taints.
-      if ((result.productionData || policy.destination === "production") && !state.tainted) {
-        state.tainted = true;
-        append(state, "taint.changed", {
-          tainted: true,
-          reason: "late-observation",
-          callId: call.id,
-        });
-      }
       return false;
     });
     if (!committed) {

@@ -336,7 +336,6 @@ test("hands are lazy: no Nomad traffic until the first tool call, then one job a
   const result = await first;
   assert.match(result.text, /ran uname -r/);
   const c = await read(store, "alice", "c1");
-  assert.equal(c.tainted, false, "sandbox work does not taint");
   const allocId = fake.jobs.get(`hands-${key}-g1`)!.allocs[0]!.ID;
   assert.equal(c.hands?.state, "ready");
   assert.equal(c.hands?.allocId, allocId);
@@ -378,17 +377,7 @@ test("hands are lazy: no Nomad traffic until the first tool call, then one job a
 test("policy runs before allocation: a refused call never starts a sandbox", async (t) => {
   const { fake, store, hands } = await setup(t);
   const transport = new VirtualSandbox();
-  // A production read earlier in the conversation tainted it.
-  await store.mutate("alice", "c1", (c) => void (c.tainted = true));
-  // Without an egress boundary, "proxied" bash egress is denied after taint, before any allocation.
   const plain = new SandboxBroker(store, new HandsSandbox(hands(store, { transport })));
-  await assert.rejects(
-    plain.execute("alice", "c1", { id: "b1", tool: "bash", args: { command: "curl x" } }),
-    (e: unknown) =>
-      e instanceof ApiError && e.status === 403 && /production-data ingress/.test(e.message),
-  );
-  assert.deepEqual(fake.requests, [], "no Nomad call: nothing was allocated");
-  assert.equal((await read(store, "alice", "c1")).hands, undefined);
   // A blocked ledger (unknown outcome) also refuses before allocation.
   await store.create(initial("c2", "alice"));
   await store.mutate("alice", "c2", (c) => {
@@ -412,26 +401,8 @@ test("policy runs before allocation: a refused call never starts a sandbox", asy
     plain.execute("alice", "c2", { id: "b2", tool: "read", args: { path: "a" } }),
     (e: unknown) => e instanceof ApiError && e.code === "tool_outcome_unknown",
   );
-  assert.deepEqual(fake.requests, []);
-  // A production-destination tool taints and is refused (egress) before allocation too.
-  await store.create(initial("c3", "alice"));
-  const prodPolicies = {
-    ...DEFAULT_TOOL_POLICIES,
-    prod_export: {
-      replay: "non-idempotent" as const,
-      destination: "production" as const,
-      egress: true,
-    },
-  };
-  const prodBroker = new SandboxBroker(store, new HandsSandbox(hands(store, { transport })), {
-    policies: prodPolicies,
-  });
-  await assert.rejects(
-    prodBroker.execute("alice", "c3", { id: "p1", tool: "prod_export", args: {} }),
-    /production-data ingress/,
-  );
-  assert.equal((await read(store, "alice", "c3")).tainted, true);
-  assert.deepEqual(fake.requests, []);
+  assert.deepEqual(fake.requests, [], "no Nomad call: nothing was allocated");
+  assert.equal((await read(store, "alice", "c2")).hands, undefined);
 });
 
 test("GitHub App access reaches the proxy policy only for owners the server enables", async (t) => {
@@ -482,7 +453,7 @@ test("GitHub App access reaches the proxy policy only for owners the server enab
   );
 });
 
-test("with the proxy as boundary, tainted bash runs and the proxy receives the taint and trusted allowlist", async (t) => {
+test("with the proxy as boundary, bash runs and the proxy receives the trusted allowlist", async (t) => {
   const { fake, store, hands } = await setup(t);
   const transport = new VirtualSandbox();
   const applied: unknown[] = [];
@@ -494,7 +465,6 @@ test("with the proxy as boundary, tainted bash runs and the proxy receives the t
   });
   assert.equal(sandbox.egressBoundary, "proxy");
   const broker = new SandboxBroker(store, sandbox);
-  await store.mutate("alice", "c1", (c) => void (c.tainted = true));
   const pending = broker.execute("alice", "c1", {
     id: "b1",
     tool: "bash",
@@ -508,23 +478,11 @@ test("with the proxy as boundary, tainted bash runs and the proxy receives the t
       version: 1,
       conversationKey: handsKey("alice", "c1"),
       workspaceId: `ws-${handsKey("alice", "c1")}`,
-      tainted: true,
       rules,
     },
   ]);
   // The agent's arguments cannot reach the policy: only the trusted resolver supplies rules.
   assert.equal(JSON.stringify(applied).includes("git fetch"), false);
-  // Direct-egress tools stay denied after taint regardless of the proxy.
-  const direct = new SandboxBroker(store, sandbox, {
-    policies: {
-      ...DEFAULT_TOOL_POLICIES,
-      upload: { replay: "non-idempotent", destination: "sandbox", egress: true },
-    },
-  });
-  await assert.rejects(
-    direct.execute("alice", "c1", { id: "u1", tool: "upload", args: {} }),
-    /egress-capable/,
-  );
 });
 
 test("every Pi tool runs in the sandbox through argv, never a host shell", async (t) => {
@@ -569,7 +527,6 @@ test("every Pi tool runs in the sandbox through argv, never a host shell", async
     for (const a of c.request.argv.filter((x) => x.startsWith("/")))
       assert.ok(a.startsWith("/workspace"), `argv path ${a} stays in /workspace`);
   const c = await read(store, "alice", "c1");
-  assert.equal(c.tainted, false);
   assert.equal(
     c.events.filter((e) => e.type === "tool.result").length,
     9,
@@ -884,7 +841,7 @@ test("the network is bound and the allowlist registered with the proxy before th
   assert.deepEqual(fake.log, [`network ${key}`, `policy ${key}`, `submit ${b.jobId}`]);
   assert.deepEqual(networks.calls, [key]);
   assert.deepEqual(policies.applied, [
-    { version: 1, conversationKey: key, workspaceId: b.workspaceId, tainted: false, rules },
+    { version: 1, conversationKey: key, workspaceId: b.workspaceId, rules },
   ]);
   // The submitted job is on exactly this conversation's network, with its proxy and CA.
   const task = (fake.jobs.get(b.jobId)!.job as unknown as JobShape).TaskGroups[0]!.Tasks[0]!;
@@ -895,24 +852,20 @@ test("the network is bound and the allowlist registered with the proxy before th
   assert.equal(task.Env.SANDBOX_DNS, net.gateway, "resolv.conf points at the gateway");
   assert.equal(task.Config.runtime, "kata");
   // Transparent egress: no proxy variables at all, only CA trust (the Vercel Sandbox set).
-  for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy"])
+  for (const k of [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "NO_PROXY",
+    "no_proxy",
+  ])
     assert.equal(task.Env[k], undefined, `${k} must not be set`);
   assert.equal(task.Env.SSL_CERT_FILE, "/etc/ssl/certs/ca-certificates.crt");
   assert.equal(task.Env.NODE_USE_SYSTEM_CA, "1");
   assert.equal(task.Env.PIP_CERT, "/etc/ssl/certs/ca-certificates.crt");
   assert.equal(task.Templates[0]!.EmbeddedTmpl, CA_PEM);
   assert.equal(task.Templates[0]!.DestPath, "local/egress-ca.pem");
-  // A tainted conversation is registered as tainted before its compute exists.
-  await store.create(initial("c2", "alice"));
-  await store.mutate("alice", "c2", (c) => {
-    c.tainted = true;
-  });
-  const second = hands().ensure("alice", "c2");
-  await until(() => fake.created.length === 2, "second job");
-  fake.release(fake.created[1]!);
-  await second;
-  assert.equal(policies.applied.at(-1)?.tainted, true);
-  assert.equal(policies.applied.at(-1)?.conversationKey, handsKey("alice", "c2"));
 });
 
 test("nothing is submitted when the network or the proxy registration fails, and a retry recovers", async (t) => {

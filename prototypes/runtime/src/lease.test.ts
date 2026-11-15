@@ -170,10 +170,9 @@ for (const kind of ["sqlite", "postgres"] as const) {
       const remote: SandboxProvider = {
         kind: "remote",
         allocate: async () => "remote-sandbox",
-        classify: async () => "ordinary",
         execute: async () => {
           dispatches++;
-          return { text: "dispatched", productionData: false };
+          return { text: "dispatched" };
         },
       };
       const parkedA = gate(),

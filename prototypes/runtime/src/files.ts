@@ -1,7 +1,7 @@
 /**
  * Files panel: read-only browsing of a conversation's sandbox /workspace for the user.
  *
- * - User-only: not a Pi tool, not in the tool ledger, never taints. Runs inside the sandbox
+ * - User-only: not a Pi tool, not in the tool ledger. Runs inside the sandbox
  *   through the same Nomad exec path as hands commands (no host filesystem access).
  * - Confinement: paths are workspace-relative (no absolute paths, no `..`, no control
  *   characters); inside the sandbox the target is resolved with `realpath -e` and must stay

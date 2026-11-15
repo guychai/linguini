@@ -17,11 +17,11 @@ import type { VisualReplies } from "./visual.ts";
 import {
   browserRequestAllowed,
   fromPreview,
-  PREVIEW_TAINTED_MESSAGE,
   PreviewProxy,
   validPort,
   type PreviewPortStore,
 } from "./preview.ts";
+import { CLICK_THROUGH_PATH, serveClickThrough } from "./out.ts";
 import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
 import {
@@ -32,24 +32,6 @@ import {
 } from "./users.ts";
 
 export type TokenBindings = Record<string, string>;
-/** Shown instead of a tainted thread's title on any surface outside that thread itself. */
-export const REDACTED_THREAD_TITLE = "Sensitive conversation";
-/**
- * A conversation as seen from another thread's surface (e.g. a future orchestrator or a project
- * view listing sibling threads), never from its own page or its owner's sidebar. A tainted
- * thread's title may contain the sensitive data itself, so it is replaced; no events, jobs or
- * metadata cross over. In v1 nothing renders other threads inside a thread, so this is the hook
- * any such surface must use.
- */
-export function crossThreadConversation(c: Conversation, viewingFrom: string) {
-  const redact = c.tainted && c.id !== viewingFrom;
-  return {
-    id: c.id,
-    updatedAt: c.updatedAt,
-    title: redact ? REDACTED_THREAD_TITLE : c.title,
-    tainted: c.tainted,
-  };
-}
 export function publicConversation(c: Conversation) {
   return {
     id: c.id,
@@ -57,7 +39,6 @@ export function publicConversation(c: Conversation) {
     updatedAt: c.updatedAt,
     title: c.title,
     metadata: c.metadata ?? {},
-    tainted: c.tainted,
     sandboxAllocated: c.sandbox !== null,
     jobs: c.jobs,
     events: c.events,
@@ -195,6 +176,11 @@ export function api(
           model: process.env.PI_MODEL ?? "claude-sonnet-4-5",
           thinkingLevel: process.env.PI_THINKING_LEVEL ?? null,
         });
+        return;
+      }
+      // Click-through page for external links in replies (out.ts): no session needed, holds no data.
+      if (request.method === "GET" && url.pathname === CLICK_THROUGH_PATH) {
+        serveClickThrough(response, url.searchParams.get("u"));
         return;
       }
       // Visual reply pages: signed URL, served with the render sandbox CSP (visual.ts). A signed-in
@@ -337,7 +323,7 @@ export function api(
       );
       if (previewRoute && options.previews) {
         const id = decodeURIComponent(previewRoute[1]!);
-        const { tainted } = await engine.store.snapshot(owner, id, { events: false });
+        await conversationExists(owner, id);
         const { ports, share, baseUrl } = options.previews;
         if (request.method === "GET" && !previewRoute[2]) {
           const list = await ports.list(owner, id);
@@ -351,8 +337,6 @@ export function api(
         }
         if (!share) throw new ApiError(501, "Preview sharing is not configured");
         if (request.method === "POST" && !previewRoute[2]) {
-          // Same rule as the agent's share_port: no new share once the thread is tainted.
-          if (tainted) throw new ApiError(403, PREVIEW_TAINTED_MESSAGE, "preview_tainted");
           const input = (await body(request)) as Record<string, unknown>;
           json(200, { result: await share(owner, id, input, "share_port") });
           return;

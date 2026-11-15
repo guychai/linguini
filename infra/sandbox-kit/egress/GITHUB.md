@@ -7,7 +7,7 @@ authenticates every GitHub request on the node. Design: git-via-egress (phases 0
 ## What the proxy does
 
 For `github.com`, `api.github.com`, `raw.githubusercontent.com` and `codeload.github.com`
-(still subject to the conversation's allowlist rules and taint):
+(still subject to the conversation's allowlist rules):
 
 | Request | Result |
 | --- | --- |
@@ -111,7 +111,8 @@ key.
 - `tests/github-test.sh`: real git clients through the real proxy against a mock GitHub
   (`git http-backend`, App API): anonymous public clone, private clone with a repo-scoped token,
   token cache, readable failures, guest credentials ignored, push refused, API/raw injection,
-  owner not enabled, taint, and nothing secret in the audit.
+  owner not enabled, public repos still readable after a private read, and nothing secret in
+  the audit.
 
 ```sh
 EGRESS_VENV=/path/to/venv "$EGRESS_VENV/bin/python" -m unittest discover -s tests -p 'test_*.py'

@@ -42,8 +42,7 @@ export class FakeDestination implements SandboxProvider {
       this.failNext = undefined;
       throw error;
     }
-    if (call.tool === "read")
-      return { text: `contents of ${String(call.args.path)}`, productionData: false };
+    if (call.tool === "read") return { text: `contents of ${String(call.args.path)}` };
     if (key) {
       const prior = this.db.prepare("SELECT result FROM effects WHERE key = ?").get(key) as
         | { result: string }
@@ -51,7 +50,7 @@ export class FakeDestination implements SandboxProvider {
       if (prior) return JSON.parse(prior.result) as ToolResult;
     }
     const n = this.count("effects") + 1;
-    const result = { text: `effect #${n} applied by ${call.tool}`, productionData: false };
+    const result = { text: `effect #${n} applied by ${call.tool}` };
     this.db
       .prepare("INSERT INTO effects (tool, call, key, result) VALUES (?, ?, ?, ?)")
       .run(call.tool, call.id, key, JSON.stringify(result));

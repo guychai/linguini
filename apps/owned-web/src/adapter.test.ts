@@ -8,7 +8,7 @@ import { OwnedAdapter, mergeEvent, toolLabel } from "./adapter.ts";
 
 const database = process.env.TEST_DATABASE_URL;
 test(
-  "real backend process: adapter, assets, duplicate commands, SSE reconnect, crash recovery and durable taint",
+  "real backend process: adapter, assets, duplicate commands, SSE reconnect and crash recovery",
   { skip: !database, timeout: 30000 },
   async () => {
     const root = resolve(import.meta.dirname, "../../..");
@@ -114,7 +114,11 @@ test(
       });
       await stop("SIGKILL");
       await start();
-      const recovered = await wait((c) => c.tainted && c.jobs.at(-1)?.status === "done");
+      const recovered = await wait(
+        (c) =>
+          c.jobs.at(-1)?.status === "done" &&
+          c.events.some((e) => String(e.data.text ?? "").includes("SYNTHETIC production record")),
+      );
       assert.equal(recovered.jobs[1]?.status, "interrupted");
       const reconnect = new AbortController(),
         replay: number[] = [];
@@ -141,10 +145,11 @@ test(
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ commandId: randomUUID(), kind: "publish" }),
       });
-      assert.equal(denied.status, 403);
+      // No taint: publish is refused only because the stub is not implemented (PRs are a tool).
+      assert.equal(denied.status, 501);
       await stop("SIGTERM");
       await start();
-      assert.equal((await adapter.snapshot(id)).tainted, true);
+      assert.equal((await adapter.snapshot(id)).jobs.at(-1)?.status, "done");
     } finally {
       await stop("SIGTERM");
     }
