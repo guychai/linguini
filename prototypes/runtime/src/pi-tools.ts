@@ -14,7 +14,7 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   find: "Find files under `path` (default /workspace) whose relative path matches the glob `pattern` (e.g. **/*.json); `limit` caps results (default 1000).",
   ls: "List a directory in the sandbox (default /workspace); directories end with /. `limit` caps entries (default 500).",
   share_port:
-    "Share a port of this sandbox as a browser preview for the user. The server must listen on 0.0.0.0 (not 127.0.0.1) and serve under the base path in the returned URL. `label` is a short name shown to the user. Pages are always served with CSP `sandbox allow-scripts allow-forms` (opaque origin: no cookies or localStorage for scripts). Returns the preview URL; idempotent.",
+    "Share a port of this sandbox as a browser preview for the user. The server must listen on 0.0.0.0 (not 127.0.0.1) and serve under the base path in the returned URL. `label` is a short name shown to the user. Pages are always served with a sandboxing CSP (opaque origin: no cookies or localStorage for scripts; scripts, styles, images, fetch/WebSocket and form posts may reach only the preview itself, so bundle assets instead of loading CDNs). Unavailable once the conversation has read sensitive data. Returns the preview URL; idempotent.",
   unshare_port: "Stop sharing a previously shared preview port.",
   ...HTML_TOOL_DESCRIPTIONS,
 };

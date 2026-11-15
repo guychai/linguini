@@ -46,8 +46,12 @@ export const DEFAULT_TOOL_POLICIES: ToolPolicies = Object.freeze({
   find: { replay: "safe-read", destination: "sandbox", egress: false },
   ls: { replay: "safe-read", destination: "sandbox", egress: false },
   // Preview ports: an upsert/delete of this conversation's share (same effect when repeated).
-  // Exposes the sandbox port to the conversation's owner over the tailnet only; no egress.
-  share_port: { replay: "idempotent-write", destination: "sandbox", egress: false },
+  // Sharing exposes the sandbox port to the owner's browser (sink: user-browser). A page in that
+  // browser can carry data on (top-level navigation is beyond any CSP), so sharing is declared
+  // egress-capable and is refused once the conversation is tainted. The preview proxy also
+  // refuses tainted conversations, which covers shares made while the thread was still clean.
+  // Unsharing only removes access, so it stays non-egress.
+  share_port: { replay: "idempotent-write", destination: "sandbox", egress: true },
   unshare_port: { replay: "idempotent-write", destination: "sandbox", egress: false },
   // Visual replies: the page is rendered by Linguini's render worker, which has no network, and
   // reads images only from this sandbox (files API). html_render stores the page in this
@@ -139,10 +143,15 @@ export function assertEgressAllowed(
   if (!c.tainted || !policy.egress) return;
   if (policy.egress === "proxied" && boundary === "proxy") return;
   if (policy.destination === "publication")
-    throw new ApiError(403, "Production-data taint permanently blocks PR and publication actions");
+    throw new ApiError(
+      403,
+      "Production-data taint permanently blocks PR and publication actions",
+      "egress_tainted",
+    );
   throw new ApiError(
     403,
     `Tool "${tool}" disabled after production-data ingress: it is declared egress-capable`,
+    "egress_tainted",
   );
 }
 export function markUnknown(c: Conversation, e: LedgerEntry, reason: string) {

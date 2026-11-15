@@ -170,8 +170,10 @@ async function rig(
           ports,
           activity: new PreviewActivity(),
           targets: { address: async () => "127.0.0.1" },
-          conversationExists: (o, i) =>
-            engine.store.snapshot(o, i, { events: false }).then(() => {}),
+          conversationState: (o, i) =>
+            engine.store
+              .snapshot(o, i, { events: false })
+              .then((c) => ({ tainted: c.tainted === true })),
           resolveOwner,
           grantKey,
           allowTarget: () => true,
