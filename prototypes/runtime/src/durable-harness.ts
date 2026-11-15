@@ -19,7 +19,7 @@
  * - Only safe reads are `replay: "safe"`. A non-idempotent call cut off by a crash or the restart
  *   limit becomes an unknown outcome in the ledger, which blocks the thread until resolved.
  * - Code mode is off unless its extension is passed in as an orchestrator (own-main:
- *   PI_DURABLE_CODEMODE=1), and then has no `models.*` and no env.
+ *   PI_DURABLE_CODEMODE=1, default off), and then has no `models.*` and no env.
  *
  * Storage: Durable ships no Postgres adapter, so each conversation gets a SQLite file opened with
  * `synchronous = FULL` (Durable's opener defaults to NORMAL, which can lose the last commits on
@@ -44,6 +44,8 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import { CODEMODE_TOOL_NAME, createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import type { Harness, Sink } from "./harness.ts";
 import { handsKey } from "./hands.ts";
 import { markUnknown, type ToolPolicy } from "./ledger.ts";
@@ -416,7 +418,6 @@ function sandboxToolRegistrations(
                 mimeType: image.mimeType,
               })),
             ],
-            structuredOutput: { text: result.text },
             details: { sandbox: true, productionData: result.productionData === true },
           };
         },
@@ -489,4 +490,17 @@ export class FileCredentialStore {
 /** The models Durable calls: pi-ai's built-in providers with the host's Pi credentials. */
 export function durableModels(authPath: string): Models {
   return builtinModels({ credentials: new FileCredentialStore(authPath) as never });
+}
+
+/**
+ * Durable code mode as an orchestrator (own-main: PI_DURABLE_CODEMODE=1, default off). Scripts run
+ * in QuickJS on a worker thread with no Node globals, file system, network or timers, and get no
+ * `models.*`; every `tools.<name>()` call is its own tool task, so it passes `beforeTool` and the
+ * broker like a model call. Nothing secret is handed to the sandbox: it has no options for env.
+ */
+export function durableCodemode(): { extension: Extension; tools: string[] } {
+  return {
+    extension: createCodemodeExtension({ sandbox: new CodemodeSandbox(), models: false }),
+    tools: [CODEMODE_TOOL_NAME],
+  };
 }
