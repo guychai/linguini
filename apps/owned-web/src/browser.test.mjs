@@ -28,10 +28,14 @@ test('retained T3 composer/transcript/sidebar, tool results, reconnect, owner ca
   assert.equal(await page.locator('a[href^="javascript:"]').count(),0);
   assert.ok(await page.getByRole('link',{name:'intentional',exact:true}).count());assert.equal(canaryHits,0);
   await composer.fill('/fixture bash fixture:production-read');await page.getByRole('button',{name:'Submit message',exact:true}).click();await page.getByText('Sensitive data: exports blocked',{exact:false}).first().waitFor({state:'visible'});
+  // A0.4: in the now-sensitive thread the same message's link is inert text with its URL visible.
+  await page.locator('[data-linguini-inert-link]').filter({hasText:'http://127.0.0.1:43229/navigation'}).first().waitFor({state:'visible'});
+  assert.equal(await page.getByRole('link',{name:'intentional',exact:true}).count(),0);assert.equal(await page.locator('a[href*="43229"]').count(),0);
   // Exercise CSP itself too, independently of Markdown sanitization and the fetch adapter.
   await page.evaluate(()=>{const img=document.createElement('img');img.src='http://127.0.0.1:43229/csp-image?data=conversation';document.body.append(img);const iframe=document.createElement('iframe');iframe.src='http://127.0.0.1:43229/csp-frame';document.body.append(iframe);});
   await page.waitForTimeout(100);assert.equal(canaryHits,0);
   await page.reload();await page.getByText('[Image blocked: secret-canary]',{exact:false}).first().waitFor({state:'visible'});
+  await page.locator('[data-linguini-inert-link]').first().waitFor({state:'visible'});assert.equal(await page.locator('a[href*="43229"]').count(),0);
   await stop();await start();await page.reload();await page.getByText('[Image blocked: secret-canary]',{exact:false}).first().waitFor({state:'visible'});assert.equal(canaryHits,0);await page.getByText('Sensitive data: exports blocked',{exact:false}).first().waitFor({state:'visible'});
   // A second tab shares IndexedDB/localStorage, so this checks actual client-cache owner namespacing.
   const second=await context.newPage();await second.goto(base);await second.getByLabel('Owner token').fill(otherToken);await second.getByRole('button',{name:'Connect to T3'}).click();await second.locator('[contenteditable="true"]').waitFor({state:'visible'});
