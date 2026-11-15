@@ -42,7 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)
 NAMES = ["api.test", "cdn.test", "denied.test", "metadata.test", "rebind.test", "denied-for-secret.test", "tp.test",
          "github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com", "localhost",
-         "registry.npmjs.org", "x.wild.test"]
+         "registry.npmjs.org", "x.wild.test", "open.test"]
 GITHUB_NAMES = ["github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com"]
 # The mock App: installation 7 on owner "octo" includes only these repositories.
 GH_INSTALLED = {"public", "private"}
@@ -418,12 +418,16 @@ def cmd_serve(a):
                          "metadata.test": "169.254.169.254", "rebind.test": "10.255.255.1",
                          "denied-for-secret.test": "127.0.0.1",
                          "registry.npmjs.org": "127.0.0.1", "x.wild.test": "127.0.0.1",
+                         "open.test": "127.0.0.1",
                          # netns-test maps this TEST-NET address to the local upstream on the node
                          "tp.test": "198.51.100.7", **{n: "127.0.0.1" for n in GITHUB_NAMES}},
         "github_app": {"app_id": 4242, "private_key_file": f"{d}/secrets/github-app.pem",
                        "api_url": f"https://localhost:{hp[0]}", "ca_file": f"{d}/upstream-ca.pem",
                        "conversation_budget": {"calls": 20, "window_s": 600}},
     }
+    if a.open_web:
+        # The open-web tier on the test upstream's port (production: 443 only).
+        config["open_web_read"] = {"enabled": True, "ports": [hp[0]]}
     with open(f"{d}/config.json", "w") as f:
         json.dump(config, f)
     for src in a.source or []:
@@ -533,6 +537,7 @@ def main():
     s.add_argument("--source", action="append")
     s.add_argument("--private", action="append")
     s.add_argument("--venv", default=os.environ.get("EGRESS_VENV", "/opt/sandbox-egress/venv"))
+    s.add_argument("--open-web", action="store_true", help="enable the open-web tier (open-web-test.sh)")
     s = sub.add_parser("policy")
     s.add_argument("--dir", required=True)
     s.add_argument("--key", required=True)

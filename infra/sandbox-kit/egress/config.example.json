@@ -4,5 +4,6 @@
   "secrets_file": "/etc/sandbox-egress/secrets.json",
   "audit_log": "/var/log/sandbox-egress/audit.jsonl",
   "allow_private_upstreams": [],
-  "static_hosts": {}
+  "static_hosts": {},
+  "open_web_read": {"enabled": false, "ports": [443], "max_url": 2048, "max_query": 512}
 }
