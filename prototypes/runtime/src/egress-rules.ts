@@ -41,14 +41,45 @@ export function taintUnsafeReason(host: string): string | null {
 
 export class EgressRuleError extends Error {}
 
-/** Throws EgressRuleError naming every offending rule; `source` says where the rules came from. */
-export function validateEgressRules(rules: unknown, source: string): EgressRule[] {
+/**
+ * Whether an allowlist rule host admits `denied` (exact, or a wildcard covering it). `denied` may
+ * itself be a wildcard (`*.warehouse.corp`): then any rule inside that zone, or covering it, hits.
+ */
+export function ruleCoversHost(ruleHost: string, denied: string): boolean {
+  const r = norm(ruleHost),
+    d = norm(denied);
+  if (!r || !d) return false;
+  const zone = (h: string) => (h.startsWith("*.") ? h.slice(2) : undefined);
+  const rz = zone(r),
+    dz = zone(d);
+  if (!rz && !dz) return r === d;
+  if (rz && !dz) return d.endsWith(`.${rz}`);
+  if (!rz && dz) return r === dz || r.endsWith(`.${dz}`);
+  return rz === dz || rz!.endsWith(`.${dz}`) || dz!.endsWith(`.${rz}`);
+}
+
+/**
+ * Throws EgressRuleError naming every offending rule; `source` says where the rules came from.
+ * `deniedHosts` (the warehouse, V1.2a) may never be reachable from a
+ * sandbox: any rule that admits one of them refuses startup.
+ */
+export function validateEgressRules(
+  rules: unknown,
+  source: string,
+  deniedHosts: readonly string[] = [],
+): EgressRule[] {
   if (!Array.isArray(rules)) throw new EgressRuleError(`${source}: egress rules must be an array`);
   const problems: string[] = [];
   rules.forEach((rule, i) => {
     // Only the taint exemption is checked here; other shape errors stay the proxy's to ignore.
     if (!rule || typeof rule !== "object") return;
     const r = rule as EgressRule;
+    const denied =
+      typeof r.host === "string" ? deniedHosts.find((d) => ruleCoversHost(r.host, d)) : undefined;
+    if (denied) {
+      problems.push(`rule ${i} (${r.host}): admits ${denied}, which sandboxes may never reach`);
+      return;
+    }
     if (r.allowWhenTainted === undefined || r.allowWhenTainted === false) return;
     if (typeof r.host !== "string") {
       problems.push(`rule ${i}: allowWhenTainted needs a string "host"`);
@@ -72,11 +103,12 @@ export function validateEgressRules(rules: unknown, source: string): EgressRule[
 export function validateOwnerEgressRules(
   byOwner: unknown,
   source: string,
+  deniedHosts: readonly string[] = [],
 ): Record<string, EgressRule[]> {
   if (!byOwner || typeof byOwner !== "object" || Array.isArray(byOwner))
     throw new EgressRuleError(`${source}: must be an object of owner id -> rules`);
   const out: Record<string, EgressRule[]> = {};
   for (const [owner, rules] of Object.entries(byOwner))
-    out[owner] = validateEgressRules(rules, `${source} (owner ${owner})`);
+    out[owner] = validateEgressRules(rules, `${source} (owner ${owner})`, deniedHosts);
   return out;
 }

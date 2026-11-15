@@ -236,6 +236,9 @@ class SandboxEgress:
                 raise ValueError(f"egress config: {k} is required")
         self.allow_private = [ipaddress.ip_network(n) for n in self.cfg.get("allow_private_upstreams", [])]
         self.static_hosts = {_norm_host(h): ip for h, ip in self.cfg.get("static_hosts", {}).items()}
+        # Hosts no sandbox may ever reach (the data warehouse): denied before any rule or the
+        # open-web tier. Exact names or "*.zone" (the zone itself included).
+        self.deny_hosts = [_norm_host(str(h)) for h in self.cfg.get("deny_hosts", []) if str(h).strip()]
         self.secrets = {}
         if self.cfg.get("secrets_file"):
             with open(self.cfg["secrets_file"]) as f:
@@ -324,6 +327,15 @@ class SandboxEgress:
         (enforced per request in _github_auth)."""
         return bool(self.github and (policy.get("github") or {}).get("app") is True)
 
+    def _denied_host(self, host: str) -> bool:
+        for d in getattr(self, "deny_hosts", []):
+            if d.startswith("*."):
+                if host == d[2:] or host.endswith(d[1:]):
+                    return True
+            elif host == d:
+                return True
+        return False
+
     def decide(self, source: str, host: str, port: int, scheme: str,
                method: str | None = None, path: str | None = None) -> Decision:
         """Host-level decision (CONNECT, DNS) when method is None; otherwise the first rule for the
@@ -335,6 +347,8 @@ class SandboxEgress:
         if not policy:
             return Decision(False, "no-policy", key)
         host = _norm_host(host)
+        if self._denied_host(host):
+            return Decision(False, "denied-host", key)
         literal = _ip(host) is not None
         first_miss: Decision | None = None
         for rule in policy.get("rules", []):

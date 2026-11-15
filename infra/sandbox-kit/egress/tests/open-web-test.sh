@@ -26,6 +26,8 @@ code() {
   case "$r" in "000 000"|"") echo 000 ;; "000 "*) echo "${r#000 }" ;; *) echo "${r%% *}" ;; esac
 }
 check open-web-get "$(code "https://open.test:$U/echo")" "200"
+# the warehouse is never an open-web host
+check open-web-warehouse-denied "$(code "https://trino.test:$U/echo")" "403"
 # HEAD reaches the upstream (the test server answers 501 to HEAD), so the proxy allowed it
 check open-web-head "$(code -I "https://open.test:$U/echo")" "501"
 check open-web-post "$(code -X POST --data x "https://open.test:$U/echo")" "403"

@@ -291,6 +291,21 @@ GitHub is special-cased in the addon (`egress/addon/github_app.py`, details and 
 
 `tests/github-test.sh` proves it end to end against a mock GitHub (real git, real proxy).
 
+## The data warehouse (V1.2a)
+
+`trino_query` runs on the backend host as the signed-in user (`prototypes/runtime/src/trino.ts`).
+Sandboxes must never reach Trino directly, so its hosts are blocked twice:
+
+- **Backend startup:** every rule file (`EGRESS_DEFAULT_RULES_FILE`, `EGRESS_RULES_FILE`) is
+  checked against `TRINO_URL`'s host and `TRINO_DENY_HOSTS`. A rule that admits one of them
+  (exact or wildcard) refuses startup.
+- **Proxy:** node config `deny_hosts` (exact names or `*.zone`) is checked before any rule and
+  before the open-web tier, for CONNECT, requests and DNS. It is denied with reason `denied-host`
+  even if a rule admits the host. Tests: `proxy-test.sh` and `open-web-test.sh`, checks named
+  `warehouse-*`.
+
+In v1 only the fake backend is wired (`TRINO_MODE=fake`); there is no real warehouse yet.
+
 ## Gaps and next steps
 
 1. **Nomad template integration: closed.** See "Nomad-launched sandboxes" above.
