@@ -33,7 +33,11 @@ export interface PublishConfig {
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
 /** The publishing App config, or undefined (tool off) when anything is missing. */
-export function publishConfigFromEnv(env: NodeJS.ProcessEnv): PublishConfig | undefined {
+export function publishConfigFromEnv(
+  env: NodeJS.ProcessEnv,
+  /** ENTITLEMENTS=1: who may publish is an entitlement; GITHUB_PUBLISH_OWNERS is only bootstrap. */
+  opts: { ownersOptional?: boolean } = {},
+): PublishConfig | undefined {
   const list = (v: string | undefined) =>
     (v ?? "")
       .split(",")
@@ -43,7 +47,8 @@ export function publishConfigFromEnv(env: NodeJS.ProcessEnv): PublishConfig | un
   const keyFile = env.GITHUB_PUBLISH_KEY_FILE?.trim();
   const repos = list(env.GITHUB_PUBLISH_REPOS).map((r) => r.toLowerCase());
   const owners = list(env.GITHUB_PUBLISH_OWNERS);
-  if (!appId || !keyFile || !repos.length || !owners.length) return undefined;
+  if (!appId || !keyFile || !repos.length || (!owners.length && !opts.ownersOptional))
+    return undefined;
   if (!/^\d+$/.test(appId)) throw new Error("GITHUB_PUBLISH_APP_ID must be the numeric App ID");
   for (const r of repos)
     if (!REPO.test(r)) throw new Error(`GITHUB_PUBLISH_REPOS: invalid repo ${JSON.stringify(r)}`);
@@ -249,7 +254,10 @@ export function githubCreatePrTool(o: {
   publisher: GitHubPublisher;
   /** Runs the change-set script in the conversation's sandbox. */
   readChanges(run: HostToolRun, dir: string, base: string): Promise<string>;
+  /** Who may publish (default: GITHUB_PUBLISH_OWNERS; with ENTITLEMENTS=1 the entitlement). */
+  ownerAllowed?: (owner: string) => boolean;
 }): HostTool {
+  const ownerAllowed = o.ownerAllowed ?? ((owner: string) => o.config.owners.has(owner));
   const repoOf = (args: Record<string, unknown>) =>
     typeof args.repo === "string" ? args.repo.trim().toLowerCase() : "";
   return {
@@ -259,7 +267,7 @@ export function githubCreatePrTool(o: {
       { kind: "github", target: `${repoOf(call.args)}@linguini/*`, crossesBoundary: true },
     ],
     permit: (d, ctx) =>
-      o.config.owners.has(ctx.owner) && o.config.repos.has(d.target.split("@")[0]!),
+      ownerAllowed(ctx.owner) && o.config.repos.has(d.target.split("@")[0]!),
     description:
       "Open a GitHub pull request from your changes in the sandbox repository. The Linguini app commits the changes " +
       "(added, modified and deleted files against origin/<base>) to a new linguini/… branch and opens the PR. Only " +
