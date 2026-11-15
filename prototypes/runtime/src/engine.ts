@@ -222,11 +222,13 @@ export class Engine {
         // outcome also blocks it, since the workspace state is uncertain.
         assertNotBlocked(c);
         assertPublicationAllowed(c);
-        // Not implemented: no PR or publish integration exists yet. Pull requests are planned as a
-        // host-side GitHub App tool (git-via-egress phase 2); this stub keeps the taint checks above.
+        // Pull requests are opened by the agent's github_create_pr host tool (github_pr.ts), which
+        // needs a repo and title; this button-style command has neither. Publishing stays 501.
         throw new ApiError(
           501,
-          "Not implemented: pull requests and publishing are not available yet",
+          command.kind === "create_pr"
+            ? "Ask the agent to open the pull request (github_create_pr), if this server has publishing set up"
+            : "Not implemented: publishing is not available yet",
           "not_implemented",
         );
       }
