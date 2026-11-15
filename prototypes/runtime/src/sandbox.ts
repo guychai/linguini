@@ -51,6 +51,11 @@ export interface BrokerOptions {
    * destination check. Their policies join `policies`.
    */
   hostTools?: HostToolRegistry;
+  /**
+   * Entitlements (entitlements.ts): throws when the thread's owner may not use the tool. Runs
+   * after the hard denies (blocked ledger, undeclared destination), before anything is dispatched.
+   */
+  entitled?: (state: Conversation, tool: string) => void;
   /** Test-only fault injection at each ledger boundary. */
   fault?: (
     boundary: LedgerBoundary,
@@ -317,12 +322,14 @@ export class SandboxBroker {
   readonly policyVersion: string;
   private fault: NonNullable<BrokerOptions["fault"]>;
   readonly hostTools?: HostToolRegistry;
+  private readonly entitled?: BrokerOptions["entitled"];
   constructor(
     readonly store: Store,
     readonly provider: SandboxProvider,
     options: BrokerOptions = {},
   ) {
     this.hostTools = options.hostTools;
+    this.entitled = options.entitled;
     this.policies = Object.freeze({
       ...(options.policies ?? DEFAULT_TOOL_POLICIES),
       ...options.hostTools?.policies(),
@@ -425,9 +432,10 @@ export class SandboxBroker {
     // never starts a VM.
     assertNotBlocked(c);
     const host = this.hostTools?.has(call.tool) === true;
+    if (host) this.checkHost(c, call);
+    this.entitled?.(c, call.tool);
     // Host tools need no sandbox; the fixture provider runs them like any other provider.
     if (host) {
-      this.checkHost(c, call);
       if (signal?.aborted) throw new ApiError(409, "Cancelled before dispatch");
       return this.dispatch(owner, id, call, policy, signal, fence);
     }
