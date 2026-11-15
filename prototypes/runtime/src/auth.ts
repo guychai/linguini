@@ -64,6 +64,8 @@ export interface LinguiniAuth {
   admin: AdminAuth;
   /** A user's email by id (trino_query's principal), or undefined when there is no such user. */
   emailOf(userId: string): Promise<string | undefined>;
+  /** A user's id by email (project invites), or undefined when there is no such user. */
+  userIdByEmail(email: string): Promise<string | undefined>;
 }
 export interface AuthConfig {
   secret: string;
@@ -194,6 +196,10 @@ export async function createAuth(config: AuthConfig): Promise<LinguiniAuth> {
     async emailOf(userId) {
       const u = await ctx.internalAdapter.findUserById(userId);
       return typeof u?.email === "string" ? u.email : undefined;
+    },
+    async userIdByEmail(email) {
+      const found = await ctx.internalAdapter.findUserByEmail(email);
+      return typeof found?.user?.id === "string" ? found.user.id : undefined;
     },
     handle: (request, response) => handler(request, response),
     async user(request) {

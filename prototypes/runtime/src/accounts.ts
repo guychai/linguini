@@ -48,6 +48,8 @@ export class AccountAdmin {
     private readonly deleter: Pick<ConversationDeleter, "tombstone" | "finish">,
     private readonly settings: Pick<SettingsStore, "deleteSettings">,
     private readonly log: (m: string) => void = () => {},
+    /** Extra per-user cleanup (project memberships), run before the user row goes. */
+    private readonly cleanup: (userId: string) => Promise<unknown> = async () => {},
   ) {}
   async users(request: IncomingMessage): Promise<AdminUserView[]> {
     const [users, refs] = await Promise.all([
@@ -117,6 +119,7 @@ export class AccountAdmin {
     };
     await purge();
     await this.settings.deleteSettings(userId);
+    await this.cleanup(userId);
     await this.admin.removeUser(request, userId);
     await purge();
     this.log(

@@ -24,6 +24,8 @@ import {
 } from "./preview.ts";
 import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
+import type { ProjectService } from "./projects.ts";
+import { projectHttp } from "./projects-api.ts";
 import {
   effectiveModel,
   validateSettings,
@@ -58,6 +60,7 @@ export function publicConversation(c: Conversation) {
     title: c.title,
     metadata: c.metadata ?? {},
     tainted: c.tainted,
+    projectId: c.projectId ?? null,
     sandboxAllocated: c.sandbox !== null,
     jobs: c.jobs,
     events: c.events,
@@ -97,6 +100,8 @@ export function api(
       /** Called for every authenticated user (e.g. so recovery loops know the owner). */
       onUser?: (user: SessionUser) => void;
     };
+    /** Projects (projects.ts, PROJECTS=1); absent: /api/projects* is a 404 and projectId refused. */
+    projects?: ProjectService;
     /** Conversation deletion (deletion.ts); absent: DELETE is a 501. */
     deleter?: Pick<ConversationDeleter, "tombstone" | "finish">;
     terminals?: TerminalManager;
@@ -444,6 +449,8 @@ export function api(
         });
         return;
       }
+      if (options.projects && (await projectHttp(options.projects, owner, request, url, json)))
+        return;
       if (url.pathname === "/api/conversations") {
         if (request.method === "GET") {
           const limit = url.searchParams.get("limit");
@@ -468,7 +475,16 @@ export function api(
             throw new ApiError(400, "Invalid conversation ID");
           const title =
             typeof input.title === "string" ? input.title.slice(0, 200) : "New conversation";
-          await engine.store.create(initial(input.id, owner, title));
+          // A thread in a project: the caller must be its editor or owner (projects off: refused).
+          let projectId: string | undefined;
+          if (input.projectId !== undefined && input.projectId !== null) {
+            if (!options.projects) throw new ApiError(400, "Projects are not enabled");
+            projectId = await options.projects.assertCanCreateThread(owner, input.projectId);
+          }
+          await engine.store.create({
+            ...initial(input.id, owner, title),
+            ...(projectId ? { projectId } : {}),
+          });
           json(201, publicConversation(await read(engine.store, owner, input.id)));
           return;
         }
