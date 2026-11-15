@@ -327,8 +327,9 @@ test(
         "one",
         (c) => c.jobs.find((j) => j.id === "prod")?.status === "done",
       );
+      // No taint: the publication stubs answer 501 (PRs are the github_create_pr tool).
       for (const kind of ["create_pr", "publish"])
-        assert.equal((await command(kind, kind)).status, 403);
+        assert.equal((await command(kind, kind)).status, 501);
       assert.equal((await req("/api/terminals")).status, 404);
       assert.equal((await req("/api/conversations/one/events?after=999999")).status, 409);
     } finally {

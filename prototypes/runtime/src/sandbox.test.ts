@@ -166,7 +166,7 @@ test("Pi registered tools reach the gateway; capabilities cannot change owners; 
       args: { command: "fixture:production-read" },
     });
     for (const route of ["/actions/create-pr", "/actions/publish"])
-      assert.equal((await request(route, {})).status, 403);
+      assert.equal((await request(route, {})).status, 501);
     assert.equal((await request("/terminal", {})).status, 404);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
