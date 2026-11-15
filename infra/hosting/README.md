@@ -47,8 +47,8 @@ no-referrer`). Other schemes are dropped; generated images stay blocked.
 ## Host tools, entitlements and Trino
 
 - Host tools (`prototypes/runtime/src/host-tools.ts`) run on the backend, not in the sandbox:
-  share_port / unshare_port, html_preview / html_render, trino_query (and later
-  github_create_pr). Each declares the kinds of place it may write; the broker checks the
+  share_port / unshare_port, html_preview / html_render, trino_query and
+  github_create_pr. Each declares the kinds of place it may write; the broker checks the
   concrete destinations before the ledger intent and again inside it (403 `destination_denied`).
   There is no sensitive-thread state.
 - Entitlements (`entitlements.ts`) are on whenever `AUTH_MODE=better-auth`; `ENTITLEMENTS=0`
@@ -63,3 +63,21 @@ no-referrer`). Other schemes are dropped; generated images stay blocked.
 - trino_query is a placeholder: `TRINO_MODE=fake` offers it with an in-memory catalog, queried
   as the user's email local part (no email: refused). `TRINO_URL`'s host is added to the sandbox
   deny list (`EGRESS_DENY_HOSTS`), so no egress rule may admit it.
+
+## GitHub publishing (github_create_pr)
+
+- Two GitHub Apps. The reader App (egress proxy) stays read-only on all repos; the **publishing
+  App** (`GITHUB_PUBLISH_APP_ID`, `GITHUB_PUBLISH_KEY_FILE`, `GITHUB_PUBLISH_REPOS`) has contents
+  + pull requests write and metadata read, no workflows, and is installed on selected repos. Its
+  key is readable only by the backend user. Unset: no tool. Public repos clone anonymously and
+  need neither App.
+- The tool reads the change set out of the sandbox (merge base with `origin/<base>`, untracked
+  files included, the user's index untouched), then creates blobs, tree, commit, a
+  `linguini/<slug>-<exec>` branch and the PR through the API with a token minted for that one
+  repo. The sandbox never pushes.
+- Refused: repos outside the allowlist (403 `destination_denied`), repos GitHub reports as
+  public (403 `github_public_repo`), `.github/workflows` changes, change sets with a well-known
+  credential format (422 `github_secret_in_changes`, same patterns as the egress proxy), and
+  users without the `github_create_pr` entitlement.
+- Co-author: `Co-authored-by: <display name> <login email>`. Convention: a user's login email is
+  their GitHub email; there is no account linking or lookup. No email: no trailer.
