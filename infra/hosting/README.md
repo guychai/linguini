@@ -85,7 +85,7 @@ no-referrer`). Other schemes are dropped; generated images stay blocked.
 ## Projects
 
 - On whenever `AUTH_MODE=better-auth` (no flag). Tables `prototype_projects*` and
-  `prototype_project_artifacts` are created at startup. Managed in Settings → Projects (upstream
+  `prototype_project_store` are created at startup. Managed in Settings → Projects (upstream
   T3 has no project-management UI for a hosted backend); T3's sidebar labels project threads
   with the project's name.
 - Roles: owner (members, invites by email of an existing user, join link, archive), editor (new
