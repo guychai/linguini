@@ -64,6 +64,8 @@ export interface LinguiniAuth {
   admin: AdminAuth;
   /** A user's email by id (trino_query's principal), or undefined when there is no such user. */
   emailOf(userId: string): Promise<string | undefined>;
+  /** A user's display name and login email (github_create_pr's co-author line). */
+  identityOf(userId: string): Promise<{ name?: string; email?: string } | undefined>;
 }
 export interface AuthConfig {
   secret: string;
@@ -194,6 +196,14 @@ export async function createAuth(config: AuthConfig): Promise<LinguiniAuth> {
     async emailOf(userId) {
       const u = await ctx.internalAdapter.findUserById(userId);
       return typeof u?.email === "string" ? u.email : undefined;
+    },
+    async identityOf(userId) {
+      const u = await ctx.internalAdapter.findUserById(userId);
+      if (!u) return undefined;
+      return {
+        ...(typeof u.name === "string" ? { name: u.name } : {}),
+        ...(typeof u.email === "string" ? { email: u.email } : {}),
+      };
     },
     handle: (request, response) => handler(request, response),
     async user(request) {

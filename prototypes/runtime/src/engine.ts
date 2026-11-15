@@ -219,10 +219,13 @@ export class Engine {
       if (["create_pr", "publish"].includes(command.kind)) {
         // An unknown tool outcome blocks publication, since the workspace state is uncertain.
         assertNotBlocked(c);
-        // Not implemented here: pull requests are the agent's github_create_pr host tool.
+        // Pull requests are the agent's github_create_pr host tool (github_pr.ts), which needs a
+        // repo and a title; this button-style command has neither. Publishing stays 501.
         throw new ApiError(
           501,
-          "Not implemented: pull requests and publishing are not available yet",
+          command.kind === "create_pr"
+            ? "Ask the agent to open the pull request (github_create_pr), if this server has publishing set up"
+            : "Not implemented: publishing is not available yet",
           "not_implemented",
         );
       }
