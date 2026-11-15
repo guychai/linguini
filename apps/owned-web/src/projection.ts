@@ -144,6 +144,26 @@ export function jobTiming(c: Conversation, job: Job, events = c.events) {
   const lastActivity = mine.at(-1)?.timestamp ?? null;
   return { requestedAt, startedAt, completedAt, lastActivity };
 }
+// Linguini projects appear as T3 projects (one per project the user is in), so T3's own sidebar
+// groups and labels project threads; personal threads stay in the implicit "owned-project".
+export const OWNED_PROJECT = "owned-project";
+const PROJECT_PREFIX = "lp-";
+let projectNames = new Map<string, string>();
+/** Names of the user's Linguini projects (boot.ts, refreshed by the Projects settings block). */
+export function configureProjects(list: ReadonlyArray<{ id: string; name: string }>) {
+  projectNames = new Map(list.map((p) => [p.id, p.name]));
+}
+export const t3ProjectId = (c: Pick<Conversation, "projectId">) =>
+  c.projectId ? `${PROJECT_PREFIX}${c.projectId}` : OWNED_PROJECT;
+/** The Linguini project behind a T3 project ID: null for personal, undefined for unknown. */
+export function linguiniProjectId(t3Id: unknown): string | null | undefined {
+  if (t3Id === OWNED_PROJECT) return null;
+  if (typeof t3Id === "string" && t3Id.startsWith(PROJECT_PREFIX)) {
+    const id = t3Id.slice(PROJECT_PREFIX.length);
+    return /^[A-Za-z0-9_-]{1,100}$/.test(id) ? id : undefined;
+  }
+  return undefined;
+}
 export function projection(c: Conversation) {
   const date = c.createdAt ?? DATE,
     updated = c.updatedAt ?? date;
@@ -151,7 +171,7 @@ export function projection(c: Conversation) {
     createdBy: "user",
     creationSource: "web",
     id: c.id,
-    projectId: "owned-project",
+    projectId: t3ProjectId(c),
     title: c.title,
     providerInstanceId: "pi",
     modelSelection: MODEL,
@@ -375,7 +395,7 @@ export function shell(rows: Conversation[]) {
     snapshotSequence: rows.reduce((n, c) => n + (c.events.at(-1)?.seq ?? 0), 0),
     projects: [
       {
-        id: "owned-project",
+        id: OWNED_PROJECT,
         title: "Sandbox conversations",
         workspaceRoot: "/workspace",
         defaultModelSelection: MODEL,
@@ -383,6 +403,21 @@ export function shell(rows: Conversation[]) {
         createdAt: DATE,
         updatedAt: DATE,
       },
+      // Every project the user is in, plus any a thread still names (e.g. left since).
+      ...[
+        ...new Set([
+          ...projectNames.keys(),
+          ...rows.flatMap((c) => (c.projectId ? [c.projectId] : [])),
+        ]),
+      ].map((id) => ({
+        id: `${PROJECT_PREFIX}${id}`,
+        title: projectNames.get(id) ?? "Project",
+        workspaceRoot: "/workspace",
+        defaultModelSelection: MODEL,
+        scripts: [],
+        createdAt: DATE,
+        updatedAt: DATE,
+      })),
     ],
     threads: threads.filter((t) => !t.archivedAt),
     archivedThreads: threads.filter((t) => t.archivedAt),

@@ -31,6 +31,8 @@ export interface Conversation {
   /** Files the user saved in the Files panel since Pi's last turn (files.ts); consumed by the
    * engine, which tells Pi about them at the start of its next turn. */
   userEdits?: string[];
+  /** Project the thread belongs to; absent: a private thread outside any project. */
+  projectId?: string;
   metadata?: {
     archivedAt?: string | null;
     pinnedAt?: string | null;

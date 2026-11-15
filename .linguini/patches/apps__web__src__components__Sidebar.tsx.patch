@@ -1,5 +1,5 @@
 diff --git a/apps/web/src/components/Sidebar.tsx b/apps/web/src/components/Sidebar.tsx
-index 65c00d70e3a0b09f62aae7e1bf5ae1e01bf112ed..088354b6bc35868de316e62595bb651fe68ff3a4 100644
+index 65c00d70e3a0b09f62aae7e1bf5ae1e01bf112ed..16cdbcaa3bd873eadbd7c869eb9d38337cf32900 100644
 --- a/apps/web/src/components/Sidebar.tsx
 +++ b/apps/web/src/components/Sidebar.tsx
 @@ -1,4 +1,5 @@
@@ -8,7 +8,7 @@ index 65c00d70e3a0b09f62aae7e1bf5ae1e01bf112ed..088354b6bc35868de316e62595bb651f
  import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
  import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
  import {
-@@ -1992,10 +1993,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
+@@ -1992,10 +1993,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
            <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
              <div className="flex h-5 min-w-0 items-center gap-1.5">
                {draftIndicator}
@@ -17,7 +17,9 @@ index 65c00d70e3a0b09f62aae7e1bf5ae1e01bf112ed..088354b6bc35868de316e62595bb651f
                  <ProjectFavicon project={props.project} className="size-4 shrink-0" />
                ) : null}
 -              {props.projectDisplayName ? (
-+              {props.projectDisplayName && !uiFlags.hideProjects ? (
++              {props.projectDisplayName &&
++              (!uiFlags.hideProjects ||
++                (props.project && uiFlags.showProjectLabel?.(props.project.id))) ? (
                  <span
                    className={cn(
                      "min-w-0 flex-1 truncate text-secondary-label text-xs",

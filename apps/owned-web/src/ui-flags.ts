@@ -5,6 +5,10 @@
 export const APP_NAME = "Linguini";
 export const OWNED_UI_FLAGS = {
   hideProjects: true,
+  // Project pickers stay hidden, but rows of Linguini project threads show the project's name
+  // (T3's own sidebar label). Personal threads stay unlabelled.
+  // "lp-<id>" is projection.ts's T3 project ID for a Linguini project.
+  showProjectLabel: (projectId: string) => projectId.startsWith("lp-"),
   hideGit: true,
   // Until Git operations and usage tracking exist.
   hideThreadDetails: true,

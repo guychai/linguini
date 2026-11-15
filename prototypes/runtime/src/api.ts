@@ -25,6 +25,10 @@ import { CLICK_THROUGH_PATH, serveClickThrough } from "./out.ts";
 import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
 import type { Entitlements } from "./entitlements.ts";
+import type { ProjectService } from "./projects.ts";
+import type { ProjectArtifacts } from "./project-store.ts";
+import type { SharedThreads } from "./shared-threads.ts";
+import { projectHttp } from "./projects-api.ts";
 import {
   effectiveModel,
   validateSettings,
@@ -40,6 +44,7 @@ export function publicConversation(c: Conversation) {
     updatedAt: c.updatedAt,
     title: c.title,
     metadata: c.metadata ?? {},
+    projectId: c.projectId ?? null,
     sandboxAllocated: c.sandbox !== null,
     jobs: c.jobs,
     events: c.events,
@@ -81,6 +86,12 @@ export function api(
     };
     /** Entitlements (entitlements.ts; on with AUTH_MODE=better-auth); absent: their routes 404. */
     entitlements?: Entitlements;
+    /** Projects (projects.ts); absent: /api/projects* is a 404 and projectId is refused. */
+    projects?: ProjectService;
+    /** Project store (project-store.ts); absent: store and grant routes are 404. */
+    projectArtifacts?: ProjectArtifacts;
+    /** Members' read-only thread view (shared-threads.ts). */
+    sharedThreads?: SharedThreads;
     /** Conversation deletion (deletion.ts); absent: DELETE is a 501. */
     deleter?: Pick<ConversationDeleter, "tombstone" | "finish">;
     terminals?: TerminalManager;
@@ -381,6 +392,25 @@ export function api(
             });
           throw new ApiError(405, "Method not allowed");
         }
+        // Project-scoped rules: members read them, the project owner replaces them.
+        const pe = /^\/api\/projects\/([A-Za-z0-9_-]{1,100})\/entitlements$/.exec(url.pathname);
+        if (pe && options.projects) {
+          const project = await options.projects.get(owner, pe[1]!);
+          if (request.method === "GET")
+            return void json(200, { rules: ent.projectRules(project.id) });
+          if (request.method === "PUT") {
+            if (project.role !== "owner")
+              throw new ApiError(403, "Only a project owner can change its entitlements");
+            return void json(200, {
+              rules: await ent.replace(
+                { projectId: project.id },
+                (await body(request)).rules,
+                owner,
+              ),
+            });
+          }
+          throw new ApiError(405, "Method not allowed");
+        }
       }
       if (url.pathname.startsWith("/api/admin/")) {
         // Not an admin (or no admin API): the routes do not exist.
@@ -447,6 +477,19 @@ export function api(
         });
         return;
       }
+      if (
+        options.projects &&
+        (await projectHttp(
+          options.projects,
+          owner,
+          request,
+          url,
+          json,
+          options.projectArtifacts,
+          options.sharedThreads,
+        ))
+      )
+        return;
       if (url.pathname === "/api/conversations") {
         if (request.method === "GET") {
           const limit = url.searchParams.get("limit");
@@ -471,7 +514,16 @@ export function api(
             throw new ApiError(400, "Invalid conversation ID");
           const title =
             typeof input.title === "string" ? input.title.slice(0, 200) : "New conversation";
-          await engine.store.create(initial(input.id, owner, title));
+          // A thread in a project: the caller must be its editor or owner.
+          let projectId: string | undefined;
+          if (input.projectId !== undefined && input.projectId !== null) {
+            if (!options.projects) throw new ApiError(400, "Projects are not enabled");
+            projectId = await options.projects.assertCanCreateThread(owner, input.projectId);
+          }
+          await engine.store.create({
+            ...initial(input.id, owner, title),
+            ...(projectId ? { projectId } : {}),
+          });
           json(201, publicConversation(await read(engine.store, owner, input.id)));
           return;
         }

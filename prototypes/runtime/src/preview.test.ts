@@ -19,7 +19,13 @@ import {
 } from "./preview.ts";
 
 /** A fake sandbox app on 127.0.0.1 (stands in for 10.x) plus Linguini's front server. */
-async function rig(t: { after: (f: () => unknown) => void }) {
+async function rig(
+  t: { after: (f: () => unknown) => void },
+  opts: {
+    memberAccess?: (viewer: string, id: string, owner: string) => Promise<string | undefined>;
+    grantKey?: Buffer;
+  } = {},
+) {
   const seen: Array<{
     url: string;
     headers: IncomingHttpHeaders;
@@ -77,6 +83,8 @@ async function rig(t: { after: (f: () => unknown) => void }) {
     resolveOwner: (r) => String(r.headers["x-test-owner"] ?? "alice"),
     allowTarget: (h) => h === "127.0.0.1",
     goneRecheckMs: 25,
+    ...(opts.memberAccess ? { memberAccess: opts.memberAccess } : {}),
+    ...(opts.grantKey ? { grantKey: opts.grantKey } : {}),
   });
   const front = createServer((req, res) => void proxy.handle(req, res));
   front.on("upgrade", (req, socket, head) => void proxy.upgrade(req, socket, head));
@@ -131,6 +139,34 @@ test("preview routing: only shared ports of an existing conversation of this own
   assert.ok(r.seen.every((s) => s.url.startsWith(`${base}/`)));
   await r.ports.unshare("alice", "c1", r.appPort);
   assert.equal((await r.get(`${base}/`)).status, 404, "unshared again");
+});
+
+test("member previews: signed-in project members open a shared port; no grant cookie; access re-checked", async (t) => {
+  const members = new Set(["carol"]);
+  const r = await rig(t, {
+    memberAccess: async (viewer, id, owner) =>
+      id === "c1" && owner === "alice" && members.has(viewer) ? owner : undefined,
+    grantKey: Buffer.alloc(32, 7),
+  });
+  const base = `/preview/c1/${r.appPort}/`;
+  const as = (who: string) => r.get(base, { "x-test-owner": who });
+  assert.equal((await as("carol")).status, 404, "nothing shared yet");
+  await r.ports.share("alice", "c1", { port: r.appPort });
+  const carol = await as("carol");
+  assert.equal(carol.status, 200);
+  assert.ok(
+    !String(carol.headers["set-cookie"] ?? "").includes("lpg="),
+    "members get no grant cookie",
+  );
+  // The owner still gets one.
+  assert.ok(String((await as("alice")).headers["set-cookie"] ?? "").includes("lpg="));
+  assert.equal((await as("dave")).status, 404, "not a member");
+  assert.ok(
+    r.targets.every((x) => x === "alice/c1"),
+    "always the owner's sandbox",
+  );
+  members.delete("carol");
+  assert.equal((await as("carol")).status, 404, "membership revoked");
 });
 
 test("preview headers: cookies/auth/identity stripped, preview cookies scoped, CSP sandbox, redirects kept in prefix", async (t) => {

@@ -81,3 +81,21 @@ no-referrer`). Other schemes are dropped; generated images stay blocked.
   users without the `github_create_pr` entitlement.
 - Co-author: `Co-authored-by: <display name> <login email>`. Convention: a user's login email is
   their GitHub email; there is no account linking or lookup. No email: no trailer.
+
+## Projects
+
+- On whenever `AUTH_MODE=better-auth` (no flag). Tables `prototype_projects*` and
+  `prototype_project_store` are created at startup. Managed in Settings → Projects (upstream
+  T3 has no project-management UI for a hosted backend); T3's sidebar labels project threads
+  with the project's name.
+- Roles: owner (members, invites by email of an existing user, join link, archive), editor (new
+  threads in the project, write the project store), viewer (read). Join links default to viewer;
+  resetting one revokes the old link.
+- Members read each other's project threads read-only
+  (`GET /api/projects/:id/threads/:owner/:conv`); a member never drives another member's thread,
+  terminal or sandbox. Turns that used an entitled data tool (`trino_query`) are hidden whole
+  from members without that entitlement (project-scoped rules apply).
+- Member previews: a signed-in project member may open another member's shared preview port; no
+  grant cookie is issued and access is re-checked while the connection lives.
+- Project store: text artifacts copied (not mounted) into a thread's
+  `/workspace/.project/<name>` on grant.

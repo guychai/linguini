@@ -36,6 +36,8 @@ export interface PreviewPortStore {
     p: { port: number; label?: string; cspSandbox?: boolean },
   ): Promise<PreviewPort>;
   unshare(owner: string, conversationId: string, port: number): Promise<boolean>;
+  /** Owner of the conversation that shares this port (member previews), or undefined. */
+  ownerOf(conversationId: string, port: number): Promise<string | undefined>;
 }
 
 /** Ports never shareable: the inner Docker daemon's TCP API. */
@@ -81,6 +83,13 @@ export class MemoryPreviewPorts implements PreviewPortStore {
   }
   async unshare(owner: string, id: string, port: number) {
     return this.rows.delete(this.k(owner, id, port));
+  }
+  async ownerOf(id: string, port: number) {
+    for (const k of this.rows.keys()) {
+      const [o, c, p] = k.split("\0");
+      if (c === id && Number(p) === port) return o;
+    }
+    return undefined;
   }
 }
 
@@ -163,6 +172,13 @@ export class PostgresPreviewPorts implements PreviewPortStore {
       [owner, id, port],
     );
     return (r.rowCount ?? 0) > 0;
+  }
+  async ownerOf(id: string, port: number) {
+    const r = await this.pool.query(
+      "SELECT owner FROM prototype_preview_ports WHERE conversation_id = $1 AND port = $2",
+      [id, port],
+    );
+    return r.rows[0] ? String(r.rows[0].owner) : undefined;
   }
   close() {
     return this.pool.end();
@@ -466,6 +482,13 @@ export interface PreviewProxyOptions {
    */
   conversationExists(owner: string, id: string): Promise<unknown>;
   resolveOwner(request: IncomingMessage): Promise<string | undefined> | string | undefined;
+  /**
+   * Member previews: resolves to the conversation's owner when the signed-in `viewer` may see
+   * that conversation (a member of its live project), else undefined. Absent: owner-only.
+   * Members get no grant cookie: every request needs their session, and an open connection is
+   * closed once they lose access.
+   */
+  memberAccess?(viewer: string, conversationId: string, owner: string): Promise<string | undefined>;
   timeoutMs?: number;
   /** How long the sandbox app may take to answer a WebSocket handshake. */
   wsHandshakeTimeoutMs?: number;
@@ -495,16 +518,29 @@ export class PreviewProxy {
     if (!owner && this.o.grantKey)
       owner = verifyGrant(this.o.grantKey, request.headers.cookie, p.conversationId, p.port);
     if (!owner) throw new ApiError(401, "Authentication required");
+    const viewer = owner;
+    let member = false;
     try {
       await this.o.conversationExists(owner, p.conversationId);
     } catch {
-      return null;
+      // Not the viewer's own conversation: a project member's shared preview, if allowed.
+      const portOwner =
+        viaSession && this.o.memberAccess
+          ? await this.o.ports.ownerOf(p.conversationId, p.port)
+          : undefined;
+      const allowed =
+        portOwner && portOwner !== viewer
+          ? await this.o.memberAccess!(viewer, p.conversationId, portOwner)
+          : undefined;
+      if (!allowed) return null;
+      owner = allowed;
+      member = true;
     }
     const shared = await this.o.ports.get(owner, p.conversationId, p.port);
     if (!shared) return null;
     const prefix = `/preview/${p.conversationId}/${p.port}/`;
     const grant =
-      viaSession && this.o.grantKey
+      viaSession && !member && this.o.grantKey
         ? issueGrant(
             this.o.grantKey,
             owner,
@@ -514,16 +550,24 @@ export class PreviewProxy {
               String(request.headers.host ?? "").endsWith(".ts.net"),
           )
         : undefined;
-    return { ...p, owner, shared, prefix, grant };
+    return { ...p, owner, viewer, member, shared, prefix, grant };
+  }
+  /** Rejects once the connection may no longer be served (deleted, or the member lost access). */
+  private alive(r: { owner: string; viewer: string; member: boolean; conversationId: string }) {
+    return async () => {
+      await this.o.conversationExists(r.owner, r.conversationId);
+      if (r.member && !(await this.o.memberAccess?.(r.viewer, r.conversationId, r.owner)))
+        throw new Error("access lost");
+    };
   }
   /**
    * While a preview connection is open, re-check the conversation; `close` runs once it is gone.
    * Returns the stop function.
    */
-  private watchGone(owner: string, id: string, close: () => void) {
+  private watchGone(alive: () => Promise<unknown>, close: () => void) {
     let stopped = false;
     const timer = setInterval(() => {
-      this.o.conversationExists(owner, id).then(
+      alive().then(
         () => undefined,
         () => {
           if (!stopped) close();
@@ -581,7 +625,7 @@ export class PreviewProxy {
       timeout: this.o.timeoutMs ?? 120_000,
     });
     // A long response (event stream, slow download) stops when the conversation is deleted.
-    const stopWatch = this.watchGone(r.owner, r.conversationId, () => {
+    const stopWatch = this.watchGone(this.alive(r), () => {
       upstream.destroy(new Error("conversation deleted"));
       response.destroy();
     });
@@ -646,7 +690,7 @@ export class PreviewProxy {
     this.o.activity.opened(owner, conversationId);
     let closed = false;
     // An open preview socket is closed once the conversation is deleted.
-    const stopWatch = this.watchGone(owner, conversationId, () => done());
+    const stopWatch = this.watchGone(this.alive(r), () => done());
     const done = () => {
       if (closed) return;
       closed = true;
