@@ -6,5 +6,6 @@
   "sensitive_dir": "/var/lib/sandbox-egress/sensitive",
   "allow_private_upstreams": [],
   "static_hosts": {},
+  "deny_hosts": [],
   "open_web_read": {"enabled": false, "ports": [443], "max_url": 2048, "max_query": 512}
 }

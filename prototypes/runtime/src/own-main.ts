@@ -1,5 +1,6 @@
 import { HostToolRegistry, previewHostTools, visualHostTools } from "./host-tools.ts";
 import { EgressLog } from "./egress-log.ts";
+import { FakeTrino, trinoHostTool, trinoHostsFromEnv } from "./trino.ts";
 import { readFile } from "node:fs/promises";
 import { validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
 import { resolve } from "node:path";
@@ -80,10 +81,14 @@ const previewGrantKey = auth
   : undefined;
 // Both rule files are validated at startup (egress-rules.ts): allowWhenTainted is refused on
 // public code hosts, package registries and wildcard hosts.
+// The warehouse (TRINO_URL's host, TRINO_DENY_HOSTS) is never reachable from a sandbox: a rule
+// that admits it refuses startup. The proxy also denies it (node config `deny_hosts`).
+const trinoDenyHosts = trinoHostsFromEnv(process.env);
 const egressRules: Record<string, EgressRule[]> = process.env.EGRESS_RULES_FILE
   ? validateOwnerEgressRules(
       JSON.parse(await readFile(process.env.EGRESS_RULES_FILE, "utf8")),
       "EGRESS_RULES_FILE",
+      trinoDenyHosts,
     )
   : {};
 // Default: the deterministic fixture. "nomad-kata" is opt-in and needs a Nomad agent with the
@@ -101,6 +106,7 @@ const defaultEgressRules: EgressRule[] = process.env.EGRESS_DEFAULT_RULES_FILE
   ? validateEgressRules(
       JSON.parse(await readFile(process.env.EGRESS_DEFAULT_RULES_FILE, "utf8")),
       "EGRESS_DEFAULT_RULES_FILE",
+      trinoDenyHosts,
     )
   : [];
 const rulesFor = (owner: string) => [...defaultEgressRules, ...(egressRules[owner] ?? [])];
@@ -267,6 +273,15 @@ const hostTools = new HostToolRegistry({
           return undefined;
         },
       })
+    : {}),
+  // trino_query: placeholder backend only (TRINO_MODE=fake); the HTTP client is not wired in v1.
+  ...(process.env.TRINO_MODE === "fake"
+    ? {
+        trino_query: trinoHostTool({
+          client: new FakeTrino(),
+          emailOf: async (owner) => auth?.emailOf(owner),
+        }),
+      }
     : {}),
   ...(kataHands
     ? visualHostTools({
