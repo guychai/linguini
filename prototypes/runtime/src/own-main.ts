@@ -1,6 +1,12 @@
 import { HostToolRegistry, previewHostTools, visualHostTools } from "./host-tools.ts";
 import { EgressLog } from "./egress-log.ts";
 import { FakeTrino, trinoHostTool, trinoHostsFromEnv } from "./trino.ts";
+import {
+  CHANGESET_SCRIPT,
+  GitHubPublisher,
+  githubCreatePrTool,
+  publishConfigFromEnv,
+} from "./github_pr.ts";
 import { readFile } from "node:fs/promises";
 import { validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
 import { resolve } from "node:path";
@@ -263,6 +269,8 @@ const provider =
       : new FixtureSandbox();
 // Host tools (host-tools.ts): previews and visual replies run on the backend through the ledger,
 // after the registry's destination and sensitive-boundary check.
+// Publishing App (GITHUB_PUBLISH_*): backend-only key; unset = no github_create_pr tool.
+const publishConfig = publishConfigFromEnv(process.env);
 const hostTools = new HostToolRegistry({
   ...(previewTools
     ? previewHostTools({
@@ -273,6 +281,28 @@ const hostTools = new HostToolRegistry({
           return undefined;
         },
       })
+    : {}),
+  // github_create_pr: the backend-only publishing App (option A). Off unless fully configured;
+  // the change set is read out of the conversation's Kata sandbox.
+  ...(publishConfig && kataHands
+    ? {
+        github_create_pr: githubCreatePrTool({
+          config: publishConfig,
+          publisher: new GitHubPublisher(publishConfig),
+          readChanges: async (run, dir, base) => {
+            const r = await kataHands!.exec(run.owner, run.conversationId, {
+              execId: `${run.execId}-changes`,
+              epoch: run.epoch,
+              callId: "github-changes",
+              argv: ["bash", "-c", CHANGESET_SCRIPT, "linguini-changes", dir, base],
+              deadlineMs: 60_000,
+              outputLimitBytes: 12 * 1024 * 1024,
+            });
+            if (r.truncated) throw new ApiError(413, "github_create_pr: change set too large");
+            return r.stdout;
+          },
+        }),
+      }
     : {}),
   // trino_query: placeholder backend only (TRINO_MODE=fake); the HTTP client is not wired in v1.
   ...(process.env.TRINO_MODE === "fake"
