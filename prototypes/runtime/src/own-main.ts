@@ -55,6 +55,7 @@ import { append, read } from "./store.ts";
 import { ConversationDeleter } from "./deletion.ts";
 import { AccountAdmin } from "./accounts.ts";
 import { AudienceCheck } from "./audience.ts";
+import { Entitlements, PostgresRules } from "./entitlements.ts";
 import { PostgresProjects, ProjectService } from "./projects.ts";
 import { GRANT_SCRIPT, PostgresArtifacts, ProjectArtifacts } from "./project-store.ts";
 import { sandboxQuota, type HandsBinding } from "./hands.ts";
@@ -105,6 +106,28 @@ if (process.env.PROJECTS === "1") {
   });
   audience.useSource(projects.memberSource());
 }
+// Entitlements (V1.6a): off unless ENTITLEMENTS=1 (needs AUTH_MODE=better-auth; Nick to OK).
+// Then trino_query, github_create_pr, MCP and GitHub reads need an allow; GITHUB_APP_OWNERS and
+// GITHUB_PUBLISH_OWNERS keep working as bootstrap allows for one release.
+const envList = (v: string | undefined) =>
+  (v ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+let entitlements: Entitlements | undefined;
+if (process.env.ENTITLEMENTS === "1") {
+  if (!authPool) throw new Error("ENTITLEMENTS=1 needs AUTH_MODE=better-auth");
+  entitlements = (
+    await new Entitlements(await PostgresRules.open(authPool), {
+      githubRead: envList(process.env.GITHUB_APP_OWNERS),
+      publish: envList(process.env.GITHUB_PUBLISH_OWNERS),
+    }, async () =>
+      (await authPool.query(`SELECT id, role FROM "user" WHERE role IS NOT NULL`)).rows.map(
+        (r) => [r.id as string, r.role as string] as [string, string],
+      ),
+    ).load()
+  ).start();
+}
 // Preview grants (preview.ts) are signed with a key derived from the auth secret.
 const previewGrantKey = auth
   ? createHmac("sha256", process.env.BETTER_AUTH_SECRET!).update("linguini-preview-grant").digest()
@@ -142,7 +165,12 @@ const defaultEgressRules: EgressRule[] = process.env.EGRESS_DEFAULT_RULES_FILE
 const rulesFor = (owner: string) => [...defaultEgressRules, ...(egressRules[owner] ?? [])];
 // GitHub App reads through the proxy (repo-scoped tokens minted on the node), for the owners in
 // GITHUB_APP_OWNERS only. The App itself is node config (/etc/sandbox-egress/config.json).
-const githubFor = githubAppAccessFromEnv(process.env);
+const githubFor = entitlements
+  ? (owner: string) =>
+      entitlements!.allowed(owner, { type: "scope", name: "github_read" })
+        ? { app: true as const }
+        : undefined
+  : githubAppAccessFromEnv(process.env);
 const sandboxNetwork =
   egressWriter && process.env.EGRESS_CA_FILE
     ? new CommandNetworkProvisioner(
@@ -294,7 +322,7 @@ const provider =
 // Host tools (host-tools.ts): previews and visual replies run on the backend through the ledger,
 // after the registry's destination and sensitive-boundary check.
 // Publishing App (GITHUB_PUBLISH_*): backend-only key; unset = no github_create_pr tool.
-const publishConfig = publishConfigFromEnv(process.env);
+const publishConfig = publishConfigFromEnv(process.env, { ownersOptional: !!entitlements });
 const hostTools = new HostToolRegistry({
   ...(previewTools
     ? previewHostTools({
@@ -312,6 +340,12 @@ const hostTools = new HostToolRegistry({
     ? {
         github_create_pr: githubCreatePrTool({
           config: publishConfig,
+          ...(entitlements
+            ? {
+                ownerAllowed: (owner: string) =>
+                  entitlements!.allowed(owner, { type: "tool", name: "github_create_pr" }),
+              }
+            : {}),
           publisher: new GitHubPublisher(publishConfig),
           readChanges: async (run, dir, base) => {
             const r = await kataHands!.exec(run.owner, run.conversationId, {
@@ -352,6 +386,9 @@ const sensitiveMarked = async (o: string, i: string) =>
 const broker = new SandboxBroker(store, provider, {
   hostTools,
   sensitiveSource: async (o, i) => ((await sensitiveMarked(o, i)) ? "private-repo" : undefined),
+  ...(entitlements
+    ? { entitled: (c, tool) => entitlements!.assertTool(c.owner, tool, c.projectId) }
+    : {}),
 });
 // Model-facing description of the sandbox; allowed hosts come from the node's default rules.
 const systemPrompt = sandboxSystemPrompt(defaultEgressRules);
@@ -590,13 +627,20 @@ const { server, closeStreams } = api(
               deleter,
               users,
               (m) => console.log(m),
-              async (userId) => projects?.removeUser(userId),
+              async (userId) => {
+                await projects?.removeUser(userId);
+                await entitlements?.removeUser(userId);
+              },
             ),
-            onUser: (u: { id: string }) => owners.add(u.id),
+            onUser: (u: { id: string; role?: string }) => {
+              owners.add(u.id);
+              entitlements?.noteRole(u.id, u.role);
+            },
           },
         }
       : {}),
     ...(projects ? { projects } : {}),
+    ...(entitlements ? { entitlements } : {}),
     ...(projectArtifacts ? { projectArtifacts } : {}),
     deleter,
     terminals,

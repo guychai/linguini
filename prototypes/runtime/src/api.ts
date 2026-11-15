@@ -26,6 +26,7 @@ import { ADMIN_ROLE, type LinguiniAuth, type SessionUser } from "./auth.ts";
 import type { AccountAdmin } from "./accounts.ts";
 import type { ProjectService } from "./projects.ts";
 import type { ProjectArtifacts } from "./project-store.ts";
+import type { Entitlements } from "./entitlements.ts";
 import { projectHttp } from "./projects-api.ts";
 import {
   effectiveModel,
@@ -105,6 +106,8 @@ export function api(
     projects?: ProjectService;
     /** Project store (project-store.ts, V1.5); absent: store and grant routes are 404. */
     projectArtifacts?: ProjectArtifacts;
+    /** Entitlements (entitlements.ts, ENTITLEMENTS=1); absent: their routes are 404. */
+    entitlements?: Entitlements;
     /** Conversation deletion (deletion.ts); absent: DELETE is a 501. */
     deleter?: Pick<ConversationDeleter, "tombstone" | "finish">;
     terminals?: TerminalManager;
@@ -386,6 +389,35 @@ export function api(
           user: u ? { id: u.id, email: u.email, name: u.name, admin: u.role === ADMIN_ROLE } : null,
         });
         return;
+      }
+      if (options.entitlements) {
+        const ent = options.entitlements;
+        if (url.pathname === "/api/me/entitlements" && request.method === "GET") {
+          json(200, ent.mine(owner, ["trino_query", "github_create_pr"]));
+          return;
+        }
+        if (url.pathname === "/api/admin/entitlements") {
+          if (auth.user?.role !== ADMIN_ROLE) throw new ApiError(404, "Not found");
+          if (request.method === "GET") return void json(200, { rules: ent.adminRules() });
+          if (request.method === "PUT")
+            return void json(200, {
+              rules: await ent.replace("admin", (await body(request)).rules, owner),
+            });
+          throw new ApiError(405, "Method not allowed");
+        }
+        const pe = /^\/api\/projects\/([A-Za-z0-9_-]{1,100})\/entitlements$/.exec(url.pathname);
+        if (pe && options.projects) {
+          const project = await options.projects.get(owner, pe[1]!);
+          if (request.method === "GET") return void json(200, { rules: ent.projectRules(project.id) });
+          if (request.method === "PUT") {
+            if (project.role !== "owner")
+              throw new ApiError(403, "Only a project owner can change its entitlements");
+            return void json(200, {
+              rules: await ent.replace({ projectId: project.id }, (await body(request)).rules, owner),
+            });
+          }
+          throw new ApiError(405, "Method not allowed");
+        }
       }
       if (url.pathname.startsWith("/api/admin/")) {
         // Not an admin (or no admin API): the routes do not exist.

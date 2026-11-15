@@ -58,6 +58,11 @@ export interface BrokerOptions {
    * Checked before every call; a reason sets the stored flag before any policy decision.
    */
   sensitiveSource?: (owner: string, id: string) => Promise<string | undefined>;
+  /**
+   * Entitlements (entitlements.ts, ENTITLEMENTS=1): throws when the thread's owner may not use
+   * the tool. Runs after the hard denies, before anything is dispatched.
+   */
+  entitled?: (state: Conversation, tool: string) => void;
   /** Test-only fault injection at each ledger boundary. */
   fault?: (
     boundary: LedgerBoundary,
@@ -356,6 +361,7 @@ export class SandboxBroker {
   private fault: NonNullable<BrokerOptions["fault"]>;
   readonly hostTools?: HostToolRegistry;
   private readonly sensitiveSource?: BrokerOptions["sensitiveSource"];
+  private readonly entitled?: BrokerOptions["entitled"];
   constructor(
     readonly store: Store,
     readonly provider: SandboxProvider,
@@ -363,6 +369,7 @@ export class SandboxBroker {
   ) {
     this.hostTools = options.hostTools;
     this.sensitiveSource = options.sensitiveSource;
+    this.entitled = options.entitled;
     this.policies = Object.freeze({
       ...(options.policies ?? DEFAULT_TOOL_POLICIES),
       ...options.hostTools?.policies(),
@@ -454,6 +461,7 @@ export class SandboxBroker {
     assertNotBlocked(c);
     assertEgressAllowed(c, policy, tool, this.provider.egressBoundary ?? "none");
     if (this.hostTools?.has(tool)) this.checkHost(c, { id: "preflight", tool, args });
+    this.entitled?.(c, tool);
   }
   private policy(tool: string): ToolPolicy {
     const policy = this.policies[tool];
@@ -510,6 +518,7 @@ export class SandboxBroker {
     assertEgressAllowed(c, policy, call.tool, boundary);
     const host = this.hostTools?.has(call.tool) === true;
     if (host) this.checkHost(c, call);
+    this.entitled?.(c, call.tool);
     const declared = policy.destination === "production" ? "production" : "ordinary";
     const needsClassify =
       !host &&
