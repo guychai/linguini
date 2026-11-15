@@ -41,7 +41,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT = os.path.dirname(HERE)
 NAMES = ["api.test", "cdn.test", "denied.test", "metadata.test", "rebind.test", "denied-for-secret.test", "tp.test",
-         "github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com", "localhost"]
+         "github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com", "localhost",
+         "registry.npmjs.org", "x.wild.test", "open.test"]
 GITHUB_NAMES = ["github.com", "api.github.com", "raw.githubusercontent.com", "codeload.github.com"]
 # The mock App: installation 7 on owner "octo" includes only these repositories.
 GH_INSTALLED = {"public", "private"}
@@ -130,6 +131,11 @@ def make_certs(d: str):
         .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        # Python >= 3.13 verifies with VERIFY_X509_STRICT: the CA needs keyUsage and a key id.
+        .add_extension(x509.KeyUsage(digital_signature=False, content_commitment=False, key_encipherment=False,
+                                     data_encipherment=False, key_agreement=False, key_cert_sign=True,
+                                     crl_sign=True, encipher_only=False, decipher_only=False), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
     key = ec.generate_private_key(ec.SECP256R1())
@@ -138,6 +144,8 @@ def make_certs(d: str):
         .issuer_name(ca_name).public_key(key.public_key()).serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(minutes=5)).not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in NAMES]), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+        .add_extension(x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
         .sign(ca_key, hashes.SHA256())
     )
     pem = serialization.Encoding.PEM
@@ -203,7 +211,7 @@ class Upstream(BaseHTTPRequestHandler):
                     GH.tokens[tok] = f"octo/{repos[0]}"
                     GH.mints.append(repos[0])
                 exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                return self._json(201, {"token": tok, "expires_at": exp, "repositories": [{"name": repos[0]}]}) or True
+                return self._json(201, {"token": tok, "expires_at": exp, "repositories": [{"name": repos[0], "private": repos[0] in GH_PRIVATE}]}) or True
             return self._json(404, {}) or True
         if host == "github.com":
             segs = path.strip("/").split("/")
@@ -358,6 +366,13 @@ def write_policy(d, key, tainted, https_port, tcp_port, only=None, github_app=Tr
          "paths": ["/*/*/git-upload-pack", "/*/*.git/git-upload-pack"]},
         {"host": "api.github.com", "ports": [https_port], "methods": ["GET", "HEAD"]},
         {"host": "raw.githubusercontent.com", "ports": [https_port], "methods": ["GET", "HEAD"]},
+        # allowWhenTainted on a package registry and on a wildcard host: the proxy ignores it.
+        {"host": "registry.npmjs.org", "ports": [https_port], "allowWhenTainted": True, "methods": ["GET", "HEAD"]},
+        {"host": "*.wild.test", "ports": [https_port], "allowWhenTainted": True, "methods": ["GET", "HEAD"]},
+        # A rule that admits the warehouse: the proxy's deny_hosts wins (the backend refuses such
+        # rule files at startup; this is the proxy-side backstop).
+        {"host": "trino.test", "ports": [https_port], "methods": ["GET", "HEAD", "POST"]},
+        {"host": "*.warehouse.test", "ports": [https_port], "methods": ["GET", "HEAD"]},
     ]
     if only:
         rules = [r for r in rules if r["host"] in only]
@@ -400,18 +415,26 @@ def cmd_serve(a):
                                "value_file": f"{d}/secrets/testsvc.token", "hosts": ["api.test", "tp.test"]}}, f)
     config = {
         "policy_dir": f"{d}/policies", "sources_dir": f"{d}/sources", "secrets_file": f"{d}/secrets.json",
-        "audit_log": f"{d}/audit.jsonl",
+        "audit_log": f"{d}/audit.jsonl", "sensitive_dir": f"{d}/sensitive",
+        # The warehouse: denied even though a (mistaken) rule below admits trino.test.
+        "deny_hosts": ["trino.test", "*.warehouse.test"],
         # Only the test upstream's loopback address; 10.x (rebind.test) stays blocked.
         "allow_private_upstreams": a.private or ["127.0.0.1/32"],
         "static_hosts": {"api.test": "127.0.0.1", "cdn.test": "127.0.0.1", "denied.test": "127.0.0.1",
                          "metadata.test": "169.254.169.254", "rebind.test": "10.255.255.1",
                          "denied-for-secret.test": "127.0.0.1",
+                         "registry.npmjs.org": "127.0.0.1", "x.wild.test": "127.0.0.1",
+                         "open.test": "127.0.0.1", "trino.test": "127.0.0.1",
+                         "db.warehouse.test": "127.0.0.1",
                          # netns-test maps this TEST-NET address to the local upstream on the node
                          "tp.test": "198.51.100.7", **{n: "127.0.0.1" for n in GITHUB_NAMES}},
         "github_app": {"app_id": 4242, "private_key_file": f"{d}/secrets/github-app.pem",
                        "api_url": f"https://localhost:{hp[0]}", "ca_file": f"{d}/upstream-ca.pem",
                        "conversation_budget": {"calls": 20, "window_s": 600}},
     }
+    if a.open_web:
+        # The open-web tier on the test upstream's port (production: 443 only).
+        config["open_web_read"] = {"enabled": True, "ports": [hp[0]]}
     with open(f"{d}/config.json", "w") as f:
         json.dump(config, f)
     for src in a.source or []:
@@ -521,6 +544,7 @@ def main():
     s.add_argument("--source", action="append")
     s.add_argument("--private", action="append")
     s.add_argument("--venv", default=os.environ.get("EGRESS_VENV", "/opt/sandbox-egress/venv"))
+    s.add_argument("--open-web", action="store_true", help="enable the open-web tier (open-web-test.sh)")
     s = sub.add_parser("policy")
     s.add_argument("--dir", required=True)
     s.add_argument("--key", required=True)

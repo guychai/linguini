@@ -1,3 +1,4 @@
+import { EgressLog } from "./egress-log.ts";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { workerId } from "./worker-id.ts";
@@ -406,6 +407,10 @@ const { server, closeStreams } = api(
     terminals,
     ...(files ? { files } : {}),
     ...(visual ? { renders: visual } : {}),
+    // EGRESS_AUDIT_LOG: the proxy's audit.jsonl (readable by this service) for the egress log.
+    ...(process.env.EGRESS_AUDIT_LOG
+      ? { egressLog: new EgressLog(process.env.EGRESS_AUDIT_LOG) }
+      : {}),
     ...(previewPorts && previewTools && kataHands
       ? {
           previews: {

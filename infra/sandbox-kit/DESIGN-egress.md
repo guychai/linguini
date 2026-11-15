@@ -89,9 +89,39 @@ Flow for one HTTPS request:
    the `http` scheme, and is never injected.
 
 **Taint.** The backend writes `tainted: true` into the policy once the conversation has seen
-production data. From then on the proxy allows only `allowWhenTainted` rules. The broker relaxes
+production data. From then on the proxy allows only `allowWhenTainted` rules. That exemption is
+only for hosts whose request logs nobody outside us can read: it is refused (the backend will not
+start, `prototypes/runtime/src/egress-rules.ts`) and ignored by the proxy (`taint_exempt`) on
+GitHub (`github.com`, `*.githubusercontent.com`, `ghcr.io`), npm/yarn, PyPI, Docker Hub and any
+wildcard host, because a GET can carry data in its path or query (`api.github.com/repos/<data>/…`,
+`registry.npmjs.org/<data>`) and the registry or the owner of the named package sees it. The broker relaxes
 `egress: "proxied"` tools after taint only when the provider has this boundary
 (`egressBoundary: "proxy"`, i.e. `HandsSandbox` built with an `EgressPolicyWriter`).
+The one exception is GitHub with the App: a sensitive conversation still reads installed
+**private** repositories with a minted token, and nothing else on GitHub. Reading a private
+repository is itself a sensitive source: the proxy records `sensitive_dir/<key>` and taints the
+conversation on its own, before the backend learns of it (`egress/GITHUB.md`).
+
+**Request limits and secret scanning.** Every request is capped on its target (default 8 KiB)
+and query (4 KiB); a rule may set `maxUrl`/`maxQuery` (`url-too-long`, `query-too-long`). The
+URL, the headers and the body (first 1 MiB) are scanned for credentials before anything goes
+upstream: GitHub, AWS, Slack, OpenAI-style and Google API keys, PEM private keys, and the exact
+values of the node's secret files and of the GitHub tokens the proxy minted. A hit is 403
+`secret-detected`, audited with the pattern name (`secret_rule`) and the path redacted, never
+the value. The injected secret's own header, and the guest's auth headers on GitHub hosts
+(stripped anyway), are not scanned. This catches mistakes and lazy exfiltration, not an
+adversary who encodes the data.
+
+**Open-web tier (`open_web_read`, off by default).** A node can let an unlisted host through
+for reading: `"open_web_read": {"enabled": true}` (optional `ports`, default `[443]`;
+`max_url` 2048; `max_query` 512). Only https GET/HEAD, no request body (`open-web-body`), no
+websocket, no raw IPs, with the tight caps above, and never for a tainted conversation
+(`tainted-new-host`). Its names resolve through the proxy DNS. Audited with `open_web: true`
+and `reason: open-web`. Listed rules keep precedence. `tests/open-web-test.sh` covers it.
+
+**Per-conversation log.** The audit `sandbox` field is the conversation's policy key, so the
+backend serves one conversation's entries (`GET /api/conversations/:id/egress`) when it can read
+the audit log (`EGRESS_AUDIT_LOG`).
 
 **CA.** There is one CA per node, in the proxy's confdir (0700, owned by the proxy user). Guests
 get only the certificate (`/var/lib/sandbox-egress/guest-ca.pem`), installed into their trust
@@ -260,6 +290,21 @@ GitHub is special-cased in the addon (`egress/addon/github_app.py`, details and 
   repository the App cannot read fails with a `text/plain` explanation git prints as `remote:`.
 
 `tests/github-test.sh` proves it end to end against a mock GitHub (real git, real proxy).
+
+## The data warehouse (V1.2a)
+
+`trino_query` runs on the backend host as the signed-in user (`prototypes/runtime/src/trino.ts`).
+Sandboxes must never reach Trino directly, so its hosts are blocked twice:
+
+- **Backend startup:** every rule file (`EGRESS_DEFAULT_RULES_FILE`, `EGRESS_RULES_FILE`) is
+  checked against `TRINO_URL`'s host and `TRINO_DENY_HOSTS`. A rule that admits one of them
+  (exact or wildcard) refuses startup.
+- **Proxy:** node config `deny_hosts` (exact names or `*.zone`) is checked before any rule and
+  before the open-web tier, for CONNECT, requests and DNS. It is denied with reason `denied-host`
+  even if a rule admits the host. Tests: `proxy-test.sh` and `open-web-test.sh`, checks named
+  `warehouse-*`.
+
+In v1 only the fake backend is wired (`TRINO_MODE=fake`); there is no real warehouse yet.
 
 ## Gaps and next steps
 

@@ -61,6 +61,8 @@ id -nG "$BACKEND_USER" | grep -qw sandbox-egress || sudo usermod -aG sandbox-egr
 sudo install -d -m 0750 -o root -g sandbox-egress "$ETC" "$ETC/secrets"
 sudo install -d -m 0750 -o sandbox-egress -g sandbox-egress /var/lib/sandbox-egress /var/log/sandbox-egress
 sudo install -d -m 0700 -o sandbox-egress -g sandbox-egress "$CA_DIR"
+# Private-repo reads mark a conversation sensitive here (persistent); the backend reads it via the group.
+sudo install -d -m 2750 -o sandbox-egress -g sandbox-egress /var/lib/sandbox-egress/sensitive
 printf 'd %s 0755 root root -\nd %s/sources 0755 root root -\nd %s/policies 2750 %s sandbox-egress -\n' "$RUN" "$RUN" "$RUN" "$BACKEND_USER" | sudo tee /etc/tmpfiles.d/sandbox-egress.conf >/dev/null
 sudo systemd-tmpfiles --create /etc/tmpfiles.d/sandbox-egress.conf
 [ -e "$ETC/config.json" ] || jq '.audit_log = "/var/log/sandbox-egress/audit.jsonl"' "$EG/config.example.json" | KIT_DEST="$ETC/config.json" sudo_install_stdin -m 0640 -o root -g sandbox-egress

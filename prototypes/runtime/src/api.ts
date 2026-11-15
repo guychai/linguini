@@ -12,6 +12,7 @@ import { Engine, type Command } from "./engine.ts";
 import type { TerminalManager } from "./terminal.ts";
 import { attachTerminalStreams, originAllowed, terminalHttp } from "./terminal-api.ts";
 import type { SandboxFiles } from "./files.ts";
+import type { EgressLog } from "./egress-log.ts";
 import type { VisualReplies } from "./visual.ts";
 import {
   browserRequestAllowed,
@@ -84,6 +85,8 @@ export function api(
     files?: Pick<SandboxFiles, "list" | "read" | "search" | "write">;
     /** Visual replies (visual.ts): signed page URLs and the page route. */
     renders?: Pick<VisualReplies, "mintUrl" | "serve">;
+    /** Per-conversation egress log (egress-log.ts); absent: the route is a 501. */
+    egressLog?: Pick<EgressLog, "recent">;
     previews?: {
       ports: PreviewPortStore;
       proxy?: (resolveOwner: (r: IncomingMessage) => Promise<string | undefined>) => PreviewProxy;
@@ -295,6 +298,19 @@ export function api(
                 ? await options.files.read(owner, id!, input.path)
                 : await options.files.search(owner, id!, input.query, input.limit),
         );
+        return;
+      }
+      const egressRoute = /^\/api\/conversations\/([a-zA-Z0-9_-]{1,100})\/egress$/.exec(
+        url.pathname,
+      );
+      if (egressRoute) {
+        if (request.method !== "GET") throw new ApiError(405, "Method not allowed");
+        if (!options.egressLog)
+          throw new ApiError(501, "The egress log is not available on this node");
+        const id = egressRoute[1]!;
+        await conversationExists(owner, id);
+        const limit = Number(url.searchParams.get("limit") ?? 100);
+        json(200, { entries: await options.egressLog.recent(owner, id, limit) });
         return;
       }
       const previewRoute = /^\/api\/conversations\/([^/]+)\/previews(?:\/(\d{1,5}))?$/.exec(
