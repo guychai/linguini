@@ -22,6 +22,7 @@ import {
   DurableHarness,
   DurableStore,
   chooseHarness,
+  durableCodemode,
   durableModels,
   type HarnessMode,
 } from "./durable-harness.ts";
@@ -332,6 +333,8 @@ const engine = new Engine(
       },
       thinkingLevel: overrides.thinkingLevel ?? process.env.PI_THINKING_LEVEL,
       systemPrompt,
+      // Off by default; turning it on is Nick's call (DESIGN-durable.md, "Code mode").
+      ...(process.env.PI_DURABLE_CODEMODE === "1" ? { orchestrators: [durableCodemode()] } : {}),
     });
   },
   // Unique per process by default (hostname:port:<random>); see worker-id.ts.
