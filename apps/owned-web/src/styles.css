@@ -251,3 +251,20 @@ html[data-owned-ui] [aria-label^="Filter threads by project"] {
   line-height: 1;
   cursor: pointer;
 }
+/* Projects settings block (projects-panel.ts, V1.4b). */
+.lg-project {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+}
+.lg-project h4 {
+  margin: 0;
+  padding: 4px 16px;
+  font-size: 13px;
+}
+.lg-project ul {
+  margin: 0;
+  padding: 0 16px 8px;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
