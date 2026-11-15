@@ -179,7 +179,7 @@ EGRESS_CA_FILE=/var/lib/sandbox-egress/guest-ca.pem \
   rule `/etc/sudoers.d/sandbox-egress` that lets `EGRESS_BACKEND_USER` run only
   `sandbox-netctl ensure|release|show`. The backend needs no docker group and no root otherwise.
 - **`rules.json`** maps owner to `EgressRule[]`:
-  `{host, ports?, schemes?, methods?, inject?, websocket?, allowWhenTainted?}`.
+  `{host, ports?, schemes?, methods?, paths?, inject?, websocket?}` (registries: GET/HEAD only).
 - **Tokens** go only in `/etc/sandbox-egress/secrets/<name>.token` (root:sandbox-egress 0640)
   plus an entry in `/etc/sandbox-egress/secrets.json` (see `egress/secrets.example.json`).
   Then `sudo systemctl restart sandbox-egress`. They never go in a policy, the backend's env,

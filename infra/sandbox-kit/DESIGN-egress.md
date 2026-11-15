@@ -64,7 +64,7 @@ Flow for one HTTPS request:
 
 1. `CONNECT host:port` is decided: source to key, key to policy, host to rule.
    - Rules are exact host or `*.domain` (subdomains only), ports (default 443) and schemes
-     (default https), plus `methods`, `websocket` and `allowWhenTainted`.
+     (default https), plus `methods`, `paths` and `websocket`.
    - A raw IP never matches a rule.
    - Denied means 403, audited.
 2. TLS from the guest is terminated with a leaf for `host`, signed by the node CA. The
@@ -88,10 +88,44 @@ Flow for one HTTPS request:
    killed before any upstream connect. Plain `http://` is allowed only for rules that list
    the `http` scheme, and is never injected.
 
-**Taint.** The backend writes `tainted: true` into the policy once the conversation has seen
-production data. From then on the proxy allows only `allowWhenTainted` rules. The broker relaxes
-`egress: "proxied"` tools after taint only when the provider has this boundary
-(`egressBoundary: "proxy"`, i.e. `HandsSandbox` built with an `EgressPolicyWriter`).
+**No taint (rework R1).** The proxy keeps no per-conversation sensitivity state and ignores a
+`tainted` field in a policy. Every conversation is treated as if it might hold sensitive data, so
+each way out is either closed, narrow and capped, or limited to destinations we own:
+- default deny; `deny_hosts` (the warehouse, internal services) before any rule or tier;
+- **package registries take GET/HEAD only**, whatever a rule says (`registry-read-only`;
+  `REGISTRY_SUFFIXES`: npm, Yarn, PyPI and pythonhosted, Docker Hub), so nothing is published
+  from a sandbox; the backend refuses to start with a default or owner rule that grants other
+  methods there (`prototypes/runtime/src/egress-rules.ts`);
+- GitHub: installed repositories read with a token minted for that repository, public ones
+  anonymously, git push always refused (see GitHub below);
+- the open-web tier is GET/HEAD only, without a body, with tight caps and a per-conversation
+  budget (below);
+- secret scanning on every request and the per-conversation audit log.
+Accepted residual risk: small amounts of data can ride in GET URLs (paths, queries, package
+names) within the caps and budgets. The audit log shows who, when, which host and how much.
+
+**Request limits and secret scanning.** Every request is capped on its target (default 8 KiB)
+and query (4 KiB); a rule may set `maxUrl`/`maxQuery` (`url-too-long`, `query-too-long`). The
+URL, the headers and the body (first 1 MiB) are scanned for credentials before anything goes
+upstream: GitHub, AWS, Slack, OpenAI-style and Google API keys, PEM private keys, and the exact
+values of the node's secret files and of the GitHub tokens the proxy minted. A hit is 403
+`secret-detected`, audited with the pattern name (`secret_rule`) and the path redacted, never
+the value. The injected secret's own header, and the guest's auth headers on GitHub hosts
+(stripped anyway), are not scanned. This catches mistakes and lazy exfiltration, not an
+adversary who encodes the data.
+
+**Open-web tier (`open_web_read`, on by default).** An unlisted host may be read: only https
+GET/HEAD (optional `ports`, default `[443]`; `max_url` 2048; `max_query` 512), no request body
+(`open-web-body`), no websocket, no raw IPs, with the tight caps above, and within a
+per-conversation budget over a sliding window (`budget`, default 300 requests, 256 KiB of URL
+(path + query) and 30 distinct hosts per 10 minutes; `budget-requests`, `budget-url-bytes`,
+`budget-hosts`). A node turns it off with `"open_web_read": {"enabled": false}`. Its names
+resolve through the proxy DNS. Audited with `open_web: true`
+and `reason: open-web`. Listed rules keep precedence. `tests/open-web-test.sh` covers it.
+
+**Per-conversation log.** The audit `sandbox` field is the conversation's policy key, so the
+backend serves one conversation's entries (`GET /api/conversations/:id/egress`) when it can read
+the audit log (`EGRESS_AUDIT_LOG`).
 
 **CA.** There is one CA per node, in the proxy's confdir (0700, owned by the proxy user). Guests
 get only the certificate (`/var/lib/sandbox-egress/guest-ca.pem`), installed into their trust
@@ -260,6 +294,19 @@ GitHub is special-cased in the addon (`egress/addon/github_app.py`, details and 
   repository the App cannot read fails with a `text/plain` explanation git prints as `remote:`.
 
 `tests/github-test.sh` proves it end to end against a mock GitHub (real git, real proxy).
+
+## Denied hosts (the data warehouse)
+
+Sandboxes must never reach the data warehouse (or other internal services) directly; host tools
+such as `trino_query` run on the backend instead. Such hosts are blocked twice:
+
+- **Backend startup:** every rule file (`EGRESS_DEFAULT_RULES_FILE`, `EGRESS_RULES_FILE`) is
+  checked against `EGRESS_DENY_HOSTS` (comma-separated, exact or `*.zone`). A rule that admits
+  one of them (exact or wildcard) refuses startup.
+- **Proxy:** node config `deny_hosts` (exact names or `*.zone`) is checked before any rule and
+  before the open-web tier, for CONNECT, requests and DNS. It is denied with reason `denied-host`
+  even if a rule admits the host. Tests: `proxy-test.sh` and `open-web-test.sh`, checks named
+  `warehouse-*`.
 
 ## Gaps and next steps
 

@@ -1,4 +1,6 @@
+import { EgressLog } from "./egress-log.ts";
 import { readFile } from "node:fs/promises";
+import { validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
 import { resolve } from "node:path";
 import { workerId } from "./worker-id.ts";
 import { ApiError, PostgresStore } from "./store.ts";
@@ -66,8 +68,20 @@ const settingsPolicy = settingsPolicyFromEnv();
 const previewGrantKey = auth
   ? createHmac("sha256", process.env.BETTER_AUTH_SECRET!).update("linguini-preview-grant").digest()
   : undefined;
+// Hosts no sandbox may ever reach (the data warehouse, internal services). Any rule admitting one
+// refuses startup; the proxy denies them too (node config `deny_hosts`).
+const egressDenyHosts = (process.env.EGRESS_DENY_HOSTS ?? "")
+  .split(",")
+  .map((h) => h.trim())
+  .filter(Boolean);
+// Both rule files are validated at startup (egress-rules.ts): registries GET/HEAD only, no stale
+// allowWhenTainted, no denied host.
 const egressRules: Record<string, EgressRule[]> = process.env.EGRESS_RULES_FILE
-  ? JSON.parse(await readFile(process.env.EGRESS_RULES_FILE, "utf8"))
+  ? validateOwnerEgressRules(
+      JSON.parse(await readFile(process.env.EGRESS_RULES_FILE, "utf8")),
+      "EGRESS_RULES_FILE",
+      egressDenyHosts,
+    )
   : {};
 // Default: the deterministic fixture. "nomad-kata" is opt-in and needs a Nomad agent with the
 // kit's agent.hcl (infra/sandbox-kit); exec has no transport yet, so tools answer 501 there.
@@ -81,7 +95,11 @@ const egressWriter = process.env.EGRESS_POLICY_DIR
 // Node-wide default allowlist (e.g. package registries), applied to every conversation before
 // the owner's own rules. Trusted server config only.
 const defaultEgressRules: EgressRule[] = process.env.EGRESS_DEFAULT_RULES_FILE
-  ? JSON.parse(await readFile(process.env.EGRESS_DEFAULT_RULES_FILE, "utf8"))
+  ? validateEgressRules(
+      JSON.parse(await readFile(process.env.EGRESS_DEFAULT_RULES_FILE, "utf8")),
+      "EGRESS_DEFAULT_RULES_FILE",
+      egressDenyHosts,
+    )
   : [];
 const rulesFor = (owner: string) => [...defaultEgressRules, ...(egressRules[owner] ?? [])];
 // GitHub App reads through the proxy (repo-scoped tokens minted on the node), for the owners in
@@ -406,6 +424,10 @@ const { server, closeStreams } = api(
     terminals,
     ...(files ? { files } : {}),
     ...(visual ? { renders: visual } : {}),
+    // EGRESS_AUDIT_LOG: the proxy's audit.jsonl (readable by this service) for the egress log.
+    ...(process.env.EGRESS_AUDIT_LOG
+      ? { egressLog: new EgressLog(process.env.EGRESS_AUDIT_LOG) }
+      : {}),
     ...(previewPorts && previewTools && kataHands
       ? {
           previews: {

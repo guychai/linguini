@@ -54,6 +54,9 @@ case ",$before," in *",private,"*) pass mint-per-repo "$before";; *) fail mint-p
 # protocol v0 too (info/refs + upload-pack without Git-Protocol)
 out=$(g -c protocol.version=0 ls-remote "$GH/octo/private.git" main | awk '{print $2}')
 check private-protocol-v0 "$out" "refs/heads/main"
+# taintless: after a private-repo read, public repos and other GitHub requests still work
+check after-private-public-ok "$(g ls-remote "$GH/octo/open.git" main | awk '{print $2}')" "refs/heads/main"
+check after-private-api-ok "$(c "https://api.github.com:$U/repos/octo/open/auth-echo" | jq -r .auth)" "none"
 # private repository the App cannot see: a readable error, no password prompt
 out=$(g clone -q "$GH/octo/hidden.git" "$work/c/hidden" || true)
 echo "  (git's output for the hidden repo: $(tr '\n' ' ' <<<"$out"))"
@@ -93,10 +96,6 @@ out=$(g clone -q "$GH/octo/private.git" "$work/c/private-off" || true)
 has app-disabled-message "$out" "not enabled for this account"
 check app-disabled-public "$(g ls-remote "$GH/octo/public.git" main | awk '{print $2}')" "refs/heads/main"
 check app-disabled-api "$(c "https://api.github.com:$U/repos/octo/private/auth-echo" | jq -r .auth)" "none"
-# tainted conversation: no GitHub at all
-"$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted
-out=$(g ls-remote "$GH/octo/public.git" || true)
-has tainted-no-github "$out" "403\|denied\|tainted\|Forbidden"
 # the App's JWTs were all valid
 check app-jwt-valid "$(curl -sS --cacert "$UCA" "https://localhost:$U/_stats" | jq -r .bad_jwt)" "0"
 # audit: per-conversation repository access recorded; no token, JWT or Basic credential anywhere

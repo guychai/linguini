@@ -39,8 +39,12 @@ and rewrites `git@github.com:` / `ssh://` URLs to HTTPS.
 Who may use the App: the backend writes `"github": {"app": true}` into a conversation's policy
 only for owners listed in `GITHUB_APP_OWNERS` (backend env; Better Auth user ids, comma-separated;
 empty by default). The App acts as itself, not as the Linguini user, so every listed owner can read
-every repository the App is installed on. Tainted conversations never get a token (and the default
-rules give them no GitHub access at all).
+every repository the App is installed on.
+
+No sensitive-thread state (rework R1): reading a private repository changes nothing about what
+the conversation can reach afterwards. Public repositories keep cloning anonymously, installed
+repositories keep using minted tokens, and git push stays refused. Publishing goes only through
+the backend's own publishing App (a separate, backend-only App on selected repositories).
 
 Access log: every GitHub request is a line in the proxy's audit log with `sandbox` (the
 conversation key), `repo`, `git_service`, `github` (`app` or `anonymous`) and `github_reason`
