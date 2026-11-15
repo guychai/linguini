@@ -98,6 +98,27 @@ wildcard host, because a GET can carry data in its path or query (`api.github.co
 `egress: "proxied"` tools after taint only when the provider has this boundary
 (`egressBoundary: "proxy"`, i.e. `HandsSandbox` built with an `EgressPolicyWriter`).
 
+**Request limits and secret scanning.** Every request is capped on its target (default 8 KiB)
+and query (4 KiB); a rule may set `maxUrl`/`maxQuery` (`url-too-long`, `query-too-long`). The
+URL, the headers and the body (first 1 MiB) are scanned for credentials before anything goes
+upstream: GitHub, AWS, Slack, OpenAI-style and Google API keys, PEM private keys, and the exact
+values of the node's secret files and of the GitHub tokens the proxy minted. A hit is 403
+`secret-detected`, audited with the pattern name (`secret_rule`) and the path redacted, never
+the value. The injected secret's own header, and the guest's auth headers on GitHub hosts
+(stripped anyway), are not scanned. This catches mistakes and lazy exfiltration, not an
+adversary who encodes the data.
+
+**Open-web tier (`open_web_read`, off by default).** A node can let an unlisted host through
+for reading: `"open_web_read": {"enabled": true}` (optional `ports`, default `[443]`;
+`max_url` 2048; `max_query` 512). Only https GET/HEAD, no request body (`open-web-body`), no
+websocket, no raw IPs, with the tight caps above, and never for a tainted conversation
+(`tainted-new-host`). Its names resolve through the proxy DNS. Audited with `open_web: true`
+and `reason: open-web`. Listed rules keep precedence. `tests/open-web-test.sh` covers it.
+
+**Per-conversation log.** The audit `sandbox` field is the conversation's policy key, so the
+backend serves one conversation's entries (`GET /api/conversations/:id/egress`) when it can read
+the audit log (`EGRESS_AUDIT_LOG`).
+
 **CA.** There is one CA per node, in the proxy's confdir (0700, owned by the proxy user). Guests
 get only the certificate (`/var/lib/sandbox-egress/guest-ca.pem`), installed into their trust
 store at sandbox start. A per-sandbox CA would limit what a leaked node CA key could do. It

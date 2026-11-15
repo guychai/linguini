@@ -11,6 +11,12 @@ plain HTTP, websocket without opt-in, non-HTTP payloads, blocked upstream addres
 (metadata and link-local always). The audit log carries decisions and sizes, never
 headers, bodies, query strings or secret values.
 
+Request limits (V1.1a): every request's path and query are length-capped (generous for listed
+hosts, tight for the open-web tier); outbound URLs, headers and bodies are scanned for credentials
+(node secrets, minted GitHub tokens, well-known key formats) and refused on a match. The optional
+open-web tier (node config `open_web_read`, off by default) lets an unlisted host take GET/HEAD
+without a body, never for a tainted (sensitive) conversation.
+
 GitHub (github_app.py): the guest's own credentials never reach GitHub; git push is refused;
 reads of one repository get a token minted for that repository only, when the node has a
 GitHub App configured and the conversation's policy enables it (`github.app`).
@@ -76,6 +82,38 @@ def taint_exempt(rule: dict) -> bool:
     if not host or "*" in host:
         return False
     return not any(host == s or host.endswith("." + s) for s in TAINT_UNSAFE_SUFFIXES)
+
+
+# Length caps on the request target (path + query). Listed hosts: generous (signed download URLs
+# carry long queries); a rule may set maxUrl / maxQuery. Open-web tier: tight, data rides in URLs.
+LISTED_LIMITS = {"max_url": 8192, "max_query": 4096}
+OPEN_WEB_LIMITS = {"max_url": 2048, "max_query": 512}
+# The synthetic rule the open-web tier matches with: GET/HEAD only, no websocket, no injection.
+OPEN_WEB_RULE = {"host": "*open-web*", "methods": ["GET", "HEAD"], "_open_web": True}
+# Bodies larger than this are not scanned for credentials (and are refused on the open-web tier).
+SCAN_BODY_LIMIT = 1024 * 1024
+# Well-known credential formats. A match anywhere outbound is refused; the audit names the rule only.
+SECRET_PATTERNS = [
+    ("github-token", re.compile(rb"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})")),
+    ("aws-access-key", re.compile(rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("slack-token", re.compile(rb"\bxox[abposr]-[A-Za-z0-9-]{10,}")),
+    ("openai-style-key", re.compile(rb"\bsk-(?:proj-|ant-)?[A-Za-z0-9_\-]{32,}")),
+    ("google-api-key", re.compile(rb"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("private-key", re.compile(rb"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----")),
+]
+
+
+def scan_secrets(data: bytes, exact: list[bytes]) -> str | None:
+    """The name of the first credential found in data, or None. `exact` are node secret values."""
+    if not data:
+        return None
+    for value in exact:
+        if value and value in data:
+            return "node-secret"
+    for name, pattern in SECRET_PATTERNS:
+        if pattern.search(data):
+            return name
+    return None
 
 
 # Blocked unless the node config lists them in allow_private_upstreams.
@@ -174,6 +212,8 @@ class SandboxEgress:
         # transparent mode a connection's original destination must be one of these for its SNI
         # (no fronting an allowed name onto an address the sandbox picked itself).
         self._resolved: dict[tuple[str, str], dict[str, float]] = {}
+        self.open_web = {"enabled": False, "ports": [443], **OPEN_WEB_LIMITS}
+        self._secret_values: dict[str, tuple[float, bytes]] = {}
 
     # ---- configuration ----
     def load(self, loader):
@@ -199,6 +239,32 @@ class SandboxEgress:
         # Optional: the Linguini GitHub App (private key file root:sandbox-egress 0640).
         self.github = gh.GitHubApp(self.cfg["github_app"]) if self.cfg.get("github_app") else None
         self.github_budget = {**GITHUB_API_BUDGET, **(self.cfg.get("github_app") or {}).get("conversation_budget", {})}
+        ow = self.cfg.get("open_web_read") or {}
+        self.open_web = {"enabled": ow.get("enabled") is True, "ports": ow.get("ports", [443]),
+                         "max_url": int(ow.get("max_url", OPEN_WEB_LIMITS["max_url"])),
+                         "max_query": int(ow.get("max_query", OPEN_WEB_LIMITS["max_query"]))}
+        self._secret_values: dict[str, tuple[float, bytes]] = {}
+
+    def _exact_secrets(self) -> list[bytes]:
+        """Values the node holds that must never leave in a request: injected secrets (re-read when
+        their file changes) and GitHub tokens the proxy minted."""
+        out = []
+        for name, s in self.secrets.items():
+            path = s.get("value_file")
+            try:
+                mtime = os.stat(path).st_mtime
+                cached = self._secret_values.get(name)
+                if not cached or cached[0] != mtime:
+                    with open(path, "rb") as f:
+                        cached = (mtime, f.read().strip())
+                    self._secret_values[name] = cached
+                if len(cached[1]) >= 8:
+                    out.append(cached[1])
+            except OSError:
+                continue
+        if self.github:
+            out.extend(tok.encode() for tok, _exp in list(self.github._tokens.values()) if tok)
+        return out
 
     # ---- identity and policy ----
     def _key_for(self, source: str) -> str | None:
@@ -261,7 +327,17 @@ class SandboxEgress:
             return Decision(True, "rule", key, rule, policy)
         if first_miss:
             return first_miss
-        return Decision(False, "raw-ip" if literal else "host-not-allowed", key)
+        if literal:
+            return Decision(False, "raw-ip", key)
+        # Open-web tier: an unlisted host may take GET/HEAD (no body, tight caps; checked per
+        # request). Never for a tainted (sensitive) conversation: no new hosts there.
+        if self.open_web["enabled"] and scheme == "https" and port in self.open_web["ports"]:
+            if policy.get("tainted"):
+                return Decision(False, "tainted-new-host", key)
+            if method is not None and method.upper() not in OPEN_WEB_RULE["methods"]:
+                return Decision(False, "open-web-method", key)
+            return Decision(True, "open-web", key, OPEN_WEB_RULE, policy)
+        return Decision(False, "host-not-allowed", key)
 
     # ---- audit ----
     def audit(self, **event):
@@ -378,8 +454,15 @@ class SandboxEgress:
         if reason is None and repo and repo.kind == "git-write":
             # Phase 1: no push, whatever the rules say (receive-pack discovery and data alike).
             reason, detail = "git-push-not-enabled", gh.denial_message(repo, "push", False)
+        if reason is None:
+            reason = self._limits(flow, d.rule or {})
+        if reason is None:
+            reason = self._scan_head(flow, host, d.rule or {})
         if reason:
-            self.audit(**base, sandbox=d.key, decision="deny", reason=reason,
+            reason, _, secret_rule = reason.partition(":")
+            if secret_rule:
+                base["path"] = "[redacted]"  # the credential may be in the path itself
+            self.audit(**base, sandbox=d.key, decision="deny", reason=reason, secret_rule=secret_rule or None,
                        repo=repo.full_name if repo else None, git_service=repo.service if repo else None)
             return self._deny(flow, 403, reason, detail)
         injected = self._inject(flow, host, d.rule or {})
@@ -387,7 +470,61 @@ class SandboxEgress:
         if host in gh.GITHUB_HOSTS and not injected:
             github = await self._github_auth(flow, host, repo, d.policy or {})
         flow.metadata["egress"] = {**base, "sandbox": d.key, "injected": injected, "websocket": is_ws or None,
+                                   "open_web": True if (d.rule or {}).get("_open_web") else None,
                                    "started": time.monotonic(), **(github or {})}
+
+    def _limits(self, flow: http.HTTPFlow, rule: dict) -> str | None:
+        """Length caps on the request target, and no body on the open-web tier."""
+        open_web = rule.get("_open_web") is True
+        lim = self.open_web if open_web else LISTED_LIMITS
+        max_url = int(rule.get("maxUrl", lim["max_url"])) if not open_web else lim["max_url"]
+        max_query = int(rule.get("maxQuery", lim["max_query"])) if not open_web else lim["max_query"]
+        target = flow.request.path
+        query = target.split("?", 1)[1] if "?" in target else ""
+        if len(target) > max_url:
+            return "url-too-long"
+        if len(query) > max_query:
+            return "query-too-long"
+        if open_web:
+            h = flow.request.headers
+            if h.get("transfer-encoding") or int(h.get("content-length", "0") or "0") > 0:
+                return "open-web-body"
+        return None
+
+    def _scan_head(self, flow: http.HTTPFlow, host: str, rule: dict) -> str | None:
+        """Credentials in the URL or headers. Headers the proxy replaces anyway (the injected
+        secret's header; the guest's auth headers on GitHub) are not the guest's to send, so skip."""
+        skip = set()
+        name = rule.get("inject")
+        if name and self.secrets.get(name):
+            skip.add(self.secrets[name]["header"].lower())
+        if host in gh.GITHUB_HOSTS:
+            skip.update(gh.GUEST_AUTH_HEADERS)
+        parts = [flow.request.path.encode("utf-8", "replace")]
+        parts += [f"{k}: {v}".encode("utf-8", "replace") for k, v in flow.request.headers.items(multi=True)
+                  if k.lower() not in skip]
+        hit = scan_secrets(b"\n".join(parts), self._exact_secrets())
+        return f"secret-detected:{hit}" if hit else None
+
+    def request(self, flow: http.HTTPFlow):
+        """Bodies: scanned for credentials once mitmproxy has read them (up to SCAN_BODY_LIMIT)."""
+        meta = flow.metadata.get("egress")
+        if not meta or flow.response is not None:
+            return
+        body = flow.request.raw_content or b""
+        if not body:
+            return
+        if meta.get("open_web"):
+            hit = "open-web-body"
+        else:
+            found = scan_secrets(body[:SCAN_BODY_LIMIT], self._exact_secrets())
+            hit = f"secret-detected:{found}" if found else None
+        if hit:
+            flow.metadata.pop("egress", None)
+            reason, _, rule = hit.partition(":")
+            self.audit(**{k: v for k, v in meta.items() if k != "started"}, decision="deny", reason=reason,
+                       secret_rule=rule or None)
+            self._deny(flow, 403, reason)
 
     async def _github_auth(self, flow: http.HTTPFlow, host: str, repo, policy: dict) -> dict:
         """Strip the guest's credentials; add a token for this one repository when allowed."""
@@ -556,6 +693,8 @@ class SandboxEgress:
         d = self.decide(src, name, 443, "https") if q else Decision(False, "no-question")
         if not d.allow and d.reason in ("port-not-allowed", "scheme-not-allowed"):
             d = Decision(True, "rule", d.key, d.rule)  # the name is allowlisted on some port
+        if q and not d.allow and d.reason == "host-not-allowed" and self.open_web["enabled"]:
+            d = self.decide(src, name, self.open_web["ports"][0], "https")  # open-web names resolve
         answers, given = [], []
         # A only. Sandboxes have no IPv6 (nftables drops it), so an AAAA answer would make a
         # v6-first client try a dead address before falling back. AAAA for an allowed name gets an
