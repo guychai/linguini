@@ -16,5 +16,9 @@
 # .github/SECURITY.md is ours (a patch). After a bump, add new upstream files under
 # .github/workflows, .github/scripts and similar automation to .linguini/deleted (delete them in the
 # assembled tree, then regen) unless we want them.
+# Guest links (decision D14, 2026-11-14): after any bump past v0.1.3, upstream's guest links
+# (apps/server/src/guest/*, Settings > Labs > Guest links, "Share with guest") stay hidden and
+# disabled in Linguini: hide the UI entry points with a flag in apps/web/src/uiFlags.ts (or the
+# settings patch) and keep /api/guest a 404 (side-doors.test.ts checks it). No hardened guest mode.
 # History: until 2026-10-14 this was a fork that merged upstream. The last fork merge base was
 # 4d73e1d5cdd32dbfb470e9422421cc40475d5e99.

@@ -8,7 +8,8 @@
  *   are dropped. Only cookies the preview itself set (stored under an `lpv_` prefix, path-scoped
  *   to the preview) go back to it.
  * - Response hygiene: `Content-Security-Policy: sandbox allow-scripts allow-forms` (opaque
- *   origin, so preview pages cannot use Linguini's origin), always: there is no opt-out;
+ *   origin, so preview pages cannot use Linguini's origin) plus fetch directives that keep the
+ *   page's requests on the preview itself (PREVIEW_CSP), always: there is no opt-out;
  *   Service-Worker-Allowed and Clear-Site-Data are dropped;
  *   Set-Cookie is renamed, path-scoped to the preview, and loses Domain.
  * - Linguini's own API refuses requests that come from preview pages (`fromPreview`).
@@ -373,7 +374,18 @@ export function rewriteSetCookie(value: string, prefix: string): string | null {
   );
 }
 
-export const PREVIEW_CSP = "sandbox allow-scripts allow-forms";
+/**
+ * Sent on every preview document response (not on a 101 upgrade). `sandbox` gives the page an
+ * opaque origin (no Linguini cookies or storage); the fetch directives keep its scripts from
+ * reaching anything but the preview itself (no third-party fetch, image beacon or form post).
+ * CSP cannot stop top-level navigation: refusing tainted conversations (P0.1) is the real control.
+ */
+export const PREVIEW_CSP =
+  "sandbox allow-scripts allow-forms; default-src 'self' data: blob:; connect-src 'self'; " +
+  "img-src 'self' data: blob:; form-action 'self'; base-uri 'self'; " +
+  // Inline <script>/<style> open no network path (every fetch directive above is still 'self'),
+  // and dev servers need them: Vite injects CSS as <style> elements and an inline HMR preamble.
+  "script-src 'self' 'unsafe-inline' data: blob:; style-src 'self' 'unsafe-inline' data: blob:";
 /** Headers sent back to the browser. */
 export function previewResponseHeaders(
   headers: IncomingMessage["headers"],
@@ -447,7 +459,12 @@ export interface PreviewProxyOptions {
   ports: PreviewPortStore;
   targets: PreviewTargets;
   activity: PreviewActivity;
-  conversationExists(owner: string, id: string): Promise<void>;
+  /**
+   * The conversation's current state; rejects when it does not exist (404). A tainted
+   * conversation's previews are refused (403 `preview_tainted`), including ports shared while it
+   * was still clean, and open preview connections are closed once it becomes tainted.
+   */
+  conversationState(owner: string, id: string): Promise<{ tainted: boolean }>;
   resolveOwner(request: IncomingMessage): Promise<string | undefined> | string | undefined;
   timeoutMs?: number;
   /** How long the sandbox app may take to answer a WebSocket handshake. */
@@ -456,7 +473,11 @@ export interface PreviewProxyOptions {
   grantKey?: Buffer;
   /** Test seam; production accepts only sandbox network addresses (10.x). */
   allowTarget?: (host: string) => boolean;
+  /** How often an open preview connection re-checks taint (default 5 s). */
+  taintRecheckMs?: number;
 }
+export const PREVIEW_TAINTED_MESSAGE =
+  "Previews are disabled in this conversation because it has read sensitive data";
 const notFound = (res: ServerResponse) => {
   res.writeHead(404, {
     "content-type": "text/plain",
@@ -476,11 +497,13 @@ export class PreviewProxy {
     if (!owner && this.o.grantKey)
       owner = verifyGrant(this.o.grantKey, request.headers.cookie, p.conversationId, p.port);
     if (!owner) throw new ApiError(401, "Authentication required");
+    let state;
     try {
-      await this.o.conversationExists(owner, p.conversationId);
+      state = await this.o.conversationState(owner, p.conversationId);
     } catch {
       return null;
     }
+    if (state.tainted) throw new ApiError(403, PREVIEW_TAINTED_MESSAGE, "preview_tainted");
     const shared = await this.o.ports.get(owner, p.conversationId, p.port);
     if (!shared) return null;
     const prefix = `/preview/${p.conversationId}/${p.port}/`;
@@ -496,6 +519,28 @@ export class PreviewProxy {
           )
         : undefined;
     return { ...p, owner, shared, prefix, grant };
+  }
+  /**
+   * While a preview connection is open, re-check the conversation; `close` runs once it is tainted
+   * or gone. Returns the stop function.
+   */
+  private watchTaint(owner: string, id: string, close: () => void) {
+    let stopped = false;
+    const timer = setInterval(() => {
+      this.o.conversationState(owner, id).then(
+        (s) => {
+          if (s.tainted && !stopped) close();
+        },
+        () => {
+          if (!stopped) close();
+        },
+      );
+    }, this.o.taintRecheckMs ?? 5_000);
+    timer.unref();
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
   }
   private async target(owner: string, id: string) {
     const host = await this.o.targets.address(owner, id);
@@ -541,6 +586,12 @@ export class PreviewProxy {
       headers: forwardRequestHeaders(request.headers, r.prefix),
       timeout: this.o.timeoutMs ?? 120_000,
     });
+    // A long response (event stream, slow download) stops when the conversation becomes tainted.
+    const stopWatch = this.watchTaint(r.owner, r.conversationId, () => {
+      upstream.destroy(new Error("conversation tainted"));
+      response.destroy();
+    });
+    response.on("close", stopWatch);
     upstream.on("response", (res) => {
       const out = previewResponseHeaders(res.headers, r.prefix);
       if (r.grant) out["set-cookie"] = [...((out["set-cookie"] as string[]) ?? []), r.grant];
@@ -581,7 +632,8 @@ export class PreviewProxy {
     let r;
     try {
       r = await this.resolve(request, url.pathname);
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) return reject(403, "Forbidden");
       return reject(401, "Unauthorized");
     }
     if (!r || r.rest === undefined) return reject(404, "Not Found");
@@ -599,9 +651,12 @@ export class PreviewProxy {
     const { owner, conversationId, prefix } = r;
     this.o.activity.opened(owner, conversationId);
     let closed = false;
+    // An open preview socket is closed once the conversation becomes tainted (or is deleted).
+    const stopWatch = this.watchTaint(owner, conversationId, () => done());
     const done = () => {
       if (closed) return;
       closed = true;
+      stopWatch();
       clearTimeout(headTimer);
       this.o.activity.closed(owner, conversationId);
       upstream.destroy();
@@ -715,6 +770,11 @@ export function previewToolHandler(o: {
     type: string,
     data: Record<string, unknown>,
   ): Promise<void>;
+  /**
+   * Whether the conversation is tainted. Sharing is refused then (403 `preview_tainted`, nothing
+   * stored), and the env file lists no ports. Unsharing still works.
+   */
+  tainted(owner: string, conversationId: string): Promise<boolean>;
 }) {
   return async (
     owner: string,
@@ -723,8 +783,10 @@ export function previewToolHandler(o: {
   ) => {
     const port = validPort(call.args.port);
     const base = o.baseUrl(id);
+    const tainted = await o.tainted(owner, id);
     let text: string;
     if (call.tool === "share_port") {
+      if (tainted) throw new ApiError(403, PREVIEW_TAINTED_MESSAGE, "preview_tainted");
       const p = await o.ports.share(owner, id, {
         port,
         ...(call.args.label === undefined ? {} : { label: String(call.args.label) }),
@@ -737,7 +799,7 @@ export function previewToolHandler(o: {
       text = [
         `Shared port ${port}. Preview URL: ${base}/${port}/`,
         `The app must listen on 0.0.0.0:${port} and serve under the base path /preview/${id}/${port}/ (also in $PREVIEW_BASE_URL_${port} and \`preview-url ${port}\`).`,
-        "Pages are served with CSP sandbox (opaque origin): cookies/localStorage are unavailable to scripts.",
+        "Pages are served with CSP sandbox (opaque origin): cookies/localStorage are unavailable to scripts, and scripts, images, fetch/WebSocket and form posts may only reach the preview itself (no third-party CDNs or APIs).",
         "The user sees a Preview chip in the conversation.",
       ].join("\n");
     } else {
@@ -745,7 +807,7 @@ export function previewToolHandler(o: {
       if (removed) await o.record(owner, id, "preview.unshared", { port });
       text = removed ? `Port ${port} is no longer shared.` : `Port ${port} was not shared.`;
     }
-    const ports = (await o.ports.list(owner, id)).map((p) => p.port);
+    const ports = tainted ? [] : (await o.ports.list(owner, id)).map((p) => p.port);
     return { text, envFile: previewEnvFile(base, ports) };
   };
 }

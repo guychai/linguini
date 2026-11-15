@@ -16,6 +16,7 @@ import type { VisualReplies } from "./visual.ts";
 import {
   browserRequestAllowed,
   fromPreview,
+  PREVIEW_TAINTED_MESSAGE,
   PreviewProxy,
   validPort,
   type PreviewPortStore,
@@ -30,6 +31,24 @@ import {
 } from "./users.ts";
 
 export type TokenBindings = Record<string, string>;
+/** Shown instead of a tainted thread's title on any surface outside that thread itself. */
+export const REDACTED_THREAD_TITLE = "Sensitive conversation";
+/**
+ * A conversation as seen from another thread's surface (e.g. a future orchestrator or a project
+ * view listing sibling threads), never from its own page or its owner's sidebar. A tainted
+ * thread's title may contain the sensitive data itself, so it is replaced; no events, jobs or
+ * metadata cross over. In v1 nothing renders other threads inside a thread, so this is the hook
+ * any such surface must use.
+ */
+export function crossThreadConversation(c: Conversation, viewingFrom: string) {
+  const redact = c.tainted && c.id !== viewingFrom;
+  return {
+    id: c.id,
+    updatedAt: c.updatedAt,
+    title: redact ? REDACTED_THREAD_TITLE : c.title,
+    tainted: c.tainted,
+  };
+}
 export function publicConversation(c: Conversation) {
   return {
     id: c.id,
@@ -302,7 +321,7 @@ export function api(
       );
       if (previewRoute && options.previews) {
         const id = decodeURIComponent(previewRoute[1]!);
-        await conversationExists(owner, id);
+        const { tainted } = await engine.store.snapshot(owner, id, { events: false });
         const { ports, share, baseUrl } = options.previews;
         if (request.method === "GET" && !previewRoute[2]) {
           const list = await ports.list(owner, id);
@@ -316,6 +335,8 @@ export function api(
         }
         if (!share) throw new ApiError(501, "Preview sharing is not configured");
         if (request.method === "POST" && !previewRoute[2]) {
+          // Same rule as the agent's share_port: no new share once the thread is tainted.
+          if (tainted) throw new ApiError(403, PREVIEW_TAINTED_MESSAGE, "preview_tainted");
           const input = (await body(request)) as Record<string, unknown>;
           json(200, { result: await share(owner, id, input, "share_port") });
           return;

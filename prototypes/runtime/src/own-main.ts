@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { validateEgressRules, validateOwnerEgressRules } from "./egress-rules.ts";
 import { resolve } from "node:path";
 import { workerId } from "./worker-id.ts";
 import { ApiError, PostgresStore } from "./store.ts";
@@ -66,8 +67,13 @@ const settingsPolicy = settingsPolicyFromEnv();
 const previewGrantKey = auth
   ? createHmac("sha256", process.env.BETTER_AUTH_SECRET!).update("linguini-preview-grant").digest()
   : undefined;
+// Both rule files are validated at startup (egress-rules.ts): allowWhenTainted is refused on
+// public code hosts, package registries and wildcard hosts.
 const egressRules: Record<string, EgressRule[]> = process.env.EGRESS_RULES_FILE
-  ? JSON.parse(await readFile(process.env.EGRESS_RULES_FILE, "utf8"))
+  ? validateOwnerEgressRules(
+      JSON.parse(await readFile(process.env.EGRESS_RULES_FILE, "utf8")),
+      "EGRESS_RULES_FILE",
+    )
   : {};
 // Default: the deterministic fixture. "nomad-kata" is opt-in and needs a Nomad agent with the
 // kit's agent.hcl (infra/sandbox-kit); exec has no transport yet, so tools answer 501 there.
@@ -81,7 +87,10 @@ const egressWriter = process.env.EGRESS_POLICY_DIR
 // Node-wide default allowlist (e.g. package registries), applied to every conversation before
 // the owner's own rules. Trusted server config only.
 const defaultEgressRules: EgressRule[] = process.env.EGRESS_DEFAULT_RULES_FILE
-  ? JSON.parse(await readFile(process.env.EGRESS_DEFAULT_RULES_FILE, "utf8"))
+  ? validateEgressRules(
+      JSON.parse(await readFile(process.env.EGRESS_DEFAULT_RULES_FILE, "utf8")),
+      "EGRESS_DEFAULT_RULES_FILE",
+    )
   : [];
 const rulesFor = (owner: string) => [...defaultEgressRules, ...(egressRules[owner] ?? [])];
 // GitHub App reads through the proxy (repo-scoped tokens minted on the node), for the owners in
@@ -128,12 +137,15 @@ const previewTools = previewPorts
       record: async (o, i, type, data) => {
         await store.mutate(o, i, (c) => void append(c, type, data));
       },
+      tainted: async (o, i) => (await store.snapshot(o, i, { events: false })).tainted === true,
     })
   : undefined;
 /** Keep the sandbox's preview env file and preview-url helper current (no ledger: not a tool). */
 const installPreviewEnv = async (owner: string, id: string, b: HandsBinding) => {
   if (!previewPorts || !b.allocId) return;
-  const ports = (await previewPorts.list(owner, id)).map((p) => p.port);
+  // A tainted conversation's shares are refused by the proxy; the sandbox stops advertising them.
+  const tainted = (await store.snapshot(owner, id, { events: false })).tainted === true;
+  const ports = tainted ? [] : (await previewPorts.list(owner, id)).map((p) => p.port);
   const r = await handsTransport.exec(b, {
     execId: `preview-env-${b.jobId}-${Date.now()}`,
     epoch: 0,
@@ -416,8 +428,9 @@ const { server, closeStreams } = api(
                 ports: previewPorts,
                 targets: { address: (o, i) => kataHands!.address(o, i) },
                 activity: previewActivity,
-                conversationExists: async (o, i) =>
-                  void (await store.snapshot(o, i, { events: false })),
+                conversationState: async (o, i) => ({
+                  tainted: (await store.snapshot(o, i, { events: false })).tainted === true,
+                }),
                 resolveOwner,
                 ...(previewGrantKey ? { grantKey: previewGrantKey } : {}),
               }),

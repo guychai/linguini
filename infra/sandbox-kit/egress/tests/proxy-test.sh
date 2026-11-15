@@ -88,10 +88,15 @@ check dns-denied "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$
 check dns-metadata-filtered "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" metadata.test)" "rcode=0 answers=-"
 check dns-aaaa-nodata "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" api.test 28)" "rcode=0 answers=-"
 check dns-aaaa-denied "$("$venv/bin/python" "$here/harness.py" dns-query 127.0.0.1 "$DP" exfil-data.evil.example 28)" "rcode=5 answers=-"
+check clean-registry "$(code "https://registry.npmjs.org:$U/echo")" "200"
+check clean-wildcard "$(code "https://x.wild.test:$U/echo")" "200"
 # taint narrows egress to allowWhenTainted hosts; the trusted side rewrites the policy
 "$venv/bin/python" "$here/harness.py" policy --dir "$work" --key "$KEY" --tainted
 check tainted-blocks-api "$(code "https://api.test:$U/echo")" "403"
 check tainted-keeps-cdn "$(code "https://cdn.test:$U/echo")" "200"
+# allowWhenTainted is ignored on package registries / code hosts and on wildcard rules
+check tainted-blocks-registry-despite-flag "$(code "https://registry.npmjs.org:$U/echo")" "403"
+check tainted-blocks-wildcard-despite-flag "$(code "https://x.wild.test:$U/echo")" "403"
 # a source with no mapping gets nothing (the policy belongs to the sandbox's interface/IP)
 rm -f "$work/sources/127.0.0.1"
 check unknown-source "$(code "https://cdn.test:$U/echo")" "403"

@@ -200,7 +200,7 @@ sudo "$NETCTL" release "$KEY" >/dev/null && pass network-released "$NET released
 # nftables table maps that address to the local upstream. Both are removed and the production
 # proxy restarted on exit. The token itself is never printed: only its sha256.
 EH=$(mktemp -d); HPID=""
-# shellcheck disable=SC2317  # invoked by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked by the EXIT trap (SC2329: shellcheck >= 0.11)
 egress_restore() { # every step tolerates failure (set -e): the production proxy must come back
   purge "$EJOB" || true; sudo "$NETCTL" release "$EKEY" >/dev/null 2>&1 || true
   local mp; mp=$(jq -r '.pid // empty' "$EH/state.json" 2>/dev/null || true)
